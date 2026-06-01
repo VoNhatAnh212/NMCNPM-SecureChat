@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Client/">
+    <Project Path="src/Client/SecureChat.Client/SecureChat.Client.csproj" />
+  </Folder>
+  <Folder Name="/src/Server/">
+    <Project Path="src/Server/SecureChat.Application/SecureChat.Application.csproj" />
+    <Project Path="src/Server/SecureChat.Domain/SecureChat.Domain.csproj" />
+    <Project Path="src/Server/SecureChat.Infrastructure/SecureChat.Infrastructure.csproj" />
+    <Project Path="src/Server/SecureChat.Server/SecureChat.Server.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/SecureChat.Shared/SecureChat.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SecureChat.Tests.Integration/SecureChat.Tests.Integration.csproj" />
+    <Project Path="tests/SecureChat.Tests.Unit/SecureChat.Tests.Unit.csproj" />
+  </Folder>
+</Solution>

@@ -6,6 +6,8 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SecureChat.Client.Models;
+using SecureChat.Client.Services;
 using SecureChat.Client.Services.Crypto;
 using SecureChat.Shared.DTOs.Auth;
 
@@ -18,14 +20,16 @@ public class ApiClient : IApiClient
 {
     private readonly HttpClient _httpClient;
     private readonly KeyStorageService _keyStorageService;
+    private readonly AuthSessionService _authSession;
     private readonly JsonSerializerOptions _jsonOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiClient"/> class.
     /// </summary>
-    public ApiClient(KeyStorageService keyStorageService)
+    public ApiClient(KeyStorageService keyStorageService, AuthSessionService authSession)
     {
         _keyStorageService = keyStorageService;
+        _authSession = authSession;
         _httpClient = new HttpClient(ServerCertificateValidator.CreateHttpClientHandler())
         {
             BaseAddress = new Uri(ConfigurationManager.AppSettings["ApiBaseUrl"] ?? "https://localhost:5001")
@@ -121,7 +125,17 @@ public class ApiClient : IApiClient
 
     private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
     {
-        var tokens = await _keyStorageService.LoadTokensAsync();
+        var tokens = _authSession.GetTokens();
+        if (string.IsNullOrWhiteSpace(tokens.access))
+        {
+            tokens = await _keyStorageService.LoadTokensAsync(_authSession.CurrentAccount);
+            if (!string.IsNullOrWhiteSpace(tokens.access) && !string.IsNullOrWhiteSpace(tokens.refresh) && tokens.expiry is not null)
+            {
+                var account = await ResolveAccountForTokenAsync(tokens.access);
+                _authSession.SetSession(tokens.access, tokens.refresh, tokens.expiry.Value, account);
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(tokens.access))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.access);
@@ -132,7 +146,12 @@ public class ApiClient : IApiClient
 
     private async Task<bool> TryRefreshTokenAsync()
     {
-        var tokens = await _keyStorageService.LoadTokensAsync();
+        var tokens = _authSession.GetTokens();
+        if (string.IsNullOrWhiteSpace(tokens.refresh))
+        {
+            tokens = await _keyStorageService.LoadTokensAsync(_authSession.CurrentAccount);
+        }
+
         if (string.IsNullOrWhiteSpace(tokens.refresh))
         {
             return false;
@@ -150,8 +169,21 @@ public class ApiClient : IApiClient
         }
 
         var auth = await ReadResponseAsync<LoginVerifyResponseDto>(response);
-        await _keyStorageService.SaveTokensAsync(auth.AccessToken, auth.RefreshToken, auth.ExpiresAt.DateTime);
+        await _keyStorageService.SaveTokensAsync(auth.AccessToken, auth.RefreshToken, auth.ExpiresAt.DateTime, _authSession.CurrentAccount);
+        _authSession.UpdateTokens(auth.AccessToken, auth.RefreshToken, auth.ExpiresAt.DateTime);
         return true;
+    }
+
+    private async Task<LocalUser?> ResolveAccountForTokenAsync(string accessToken)
+    {
+        var deviceId = AuthSessionService.ExtractStringClaim(accessToken, "deviceId");
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return null;
+        }
+
+        var accounts = await _keyStorageService.LoadAccountsAsync();
+        return accounts.FirstOrDefault(account => string.Equals(account.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<T> ReadResponseAsync<T>(HttpResponseMessage response)

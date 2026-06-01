@@ -3,6 +3,7 @@
 using Microsoft.Extensions.Logging;
 using SecureChat.Domain.Exceptions;
 using SecureChat.Domain.Interfaces.Repositories;
+using SecureChat.Application.Services.Realtime;
 using SecureChat.Shared.DTOs.Device;
 using SecureChat.Shared.Enums;
 
@@ -15,15 +16,21 @@ public class DeviceService : IDeviceService
 {
     private readonly IDeviceRepository _deviceRepository;
     private readonly IRefreshTokenRepository _refreshTokenRepository;
+    private readonly IRealtimeNotifier _realtimeNotifier;
     private readonly ILogger<DeviceService> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DeviceService"/> class.
     /// </summary>
-    public DeviceService(IDeviceRepository deviceRepository, IRefreshTokenRepository refreshTokenRepository, ILogger<DeviceService> logger)
+    public DeviceService(
+        IDeviceRepository deviceRepository,
+        IRefreshTokenRepository refreshTokenRepository,
+        IRealtimeNotifier realtimeNotifier,
+        ILogger<DeviceService> logger)
     {
         _deviceRepository = deviceRepository;
         _refreshTokenRepository = refreshTokenRepository;
+        _realtimeNotifier = realtimeNotifier;
         _logger = logger;
     }
 
@@ -40,8 +47,10 @@ public class DeviceService : IDeviceService
                 DeviceName = device.DeviceName,
                 Platform = device.Platform,
                 LastLoginAt = device.LastLoginAt,
+                CreatedAt = device.CreatedAt,
                 IsCurrentDevice = currentDeviceId.HasValue && device.Id == currentDeviceId.Value,
-                Fingerprint = device.DeviceFingerprint
+                Fingerprint = device.DeviceFingerprint,
+                Status = device.Status
             })
             .ToList();
     }
@@ -60,5 +69,6 @@ public class DeviceService : IDeviceService
         device.Status = DeviceStatus.Revoked;
         await _deviceRepository.UpdateAsync(device);
         await _refreshTokenRepository.RevokeAllForDeviceAsync(deviceId);
+        await _realtimeNotifier.SendDeviceUpdateAsync(userId, "DeviceRevoked", deviceId);
     }
 }

@@ -26,6 +26,10 @@ public record ChatDto
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 
+    /// <summary>Gets the backing group identifier for group chats.</summary>
+    [JsonPropertyName("groupId")]
+    public Guid? GroupId { get; init; }
+
     /// <summary>Gets the chat avatar URL.</summary>
     [JsonPropertyName("avatarUrl")]
     public string AvatarUrl { get; init; } = string.Empty;

@@ -75,15 +75,6 @@ public class ChatController : ControllerBase
         return Ok(ApiResponse<MessageDto>.Ok(message));
     }
 
-    /// <summary>Marks all messages in a chat as read for the current user.</summary>
-    [HttpPost("{chatId:guid}/read")]
-    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<bool>>> MarkRead(Guid chatId)
-    {
-        await _messageService.MarkMessagesReadAsync(chatId, User.GetUserId());
-        return Ok(ApiResponse<bool>.Ok(true));
-    }
-
     /// <summary>Gets or creates a personal chat.</summary>
     [HttpPost("personal/{otherUserId:guid}")]
     [ProducesResponseType(typeof(ApiResponse<ChatDto>), StatusCodes.Status200OK)]
@@ -109,5 +100,14 @@ public class ChatController : ControllerBase
     {
         var sessionKey = await _messageService.GetSessionKeyAsync(chatId, deviceId, User.GetUserId());
         return Ok(ApiResponse<SessionKeyDto?>.Ok(sessionKey));
+    }
+
+    /// <summary>Removes a chat from the current user's chat list.</summary>
+    [HttpDelete("{chatId:guid}")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteChat(Guid chatId)
+    {
+        await _messageService.DeleteChatForUserAsync(chatId, User.GetUserId());
+        return Ok(ApiResponse<bool>.Ok(true));
     }
 }

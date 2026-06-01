@@ -31,9 +31,9 @@ public interface IMessageService
     /// <summary>Gets an encrypted session key for a device.</summary>
     Task<SessionKeyDto?> GetSessionKeyAsync(Guid chatId, Guid deviceId, Guid requesterId);
 
-    /// <summary>Marks messages as read for a user in a chat.</summary>
-    Task MarkMessagesReadAsync(Guid chatId, Guid userId);
-
     /// <summary>Gets chat participant identifiers.</summary>
     Task<IReadOnlyCollection<Guid>> GetChatParticipantIdsAsync(Guid chatId);
+
+    /// <summary>Removes a chat from the current user's chat list.</summary>
+    Task DeleteChatForUserAsync(Guid chatId, Guid userId);
 }

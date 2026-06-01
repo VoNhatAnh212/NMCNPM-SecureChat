@@ -1,6 +1,7 @@
 #nullable enable
 
 using SecureChat.Client.Models;
+using SecureChat.Client.Services;
 using SecureChat.Client.Services.Api;
 using SecureChat.Client.Services.Crypto;
 using SecureChat.Client.Services.SignalR;
@@ -18,6 +19,7 @@ public class AuthController
     private readonly AuthApiService _authApiService;
     private readonly RsaService _rsaService;
     private readonly KeyStorageService _keyStorageService;
+    private readonly AuthSessionService _authSession;
     private readonly ISignalRService _signalRService;
     private readonly SessionCache _sessionCache;
 
@@ -28,12 +30,14 @@ public class AuthController
         AuthApiService authApiService,
         RsaService rsaService,
         KeyStorageService keyStorageService,
+        AuthSessionService authSession,
         ISignalRService signalRService,
         SessionCache sessionCache)
     {
         _authApiService = authApiService;
         _rsaService = rsaService;
         _keyStorageService = keyStorageService;
+        _authSession = authSession;
         _signalRService = signalRService;
         _sessionCache = sessionCache;
     }
@@ -55,8 +59,7 @@ public class AuthController
             SignedChallenge = signedChallenge
         });
 
-        await _keyStorageService.SaveTokensAsync(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime);
-        await _keyStorageService.SaveAccountAsync(new LocalUser
+        var account = new LocalUser
         {
             Id = loginResponse.User.Id,
             DisplayName = loginResponse.User.DisplayName,
@@ -64,7 +67,10 @@ public class AuthController
             AvatarUrl = loginResponse.User.AvatarUrl,
             DeviceId = deviceId,
             LastLoginAt = DateTime.UtcNow
-        });
+        };
+        await _keyStorageService.SaveTokensAsync(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime, account);
+        await _keyStorageService.SaveAccountAsync(account);
+        _authSession.SetSession(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime, account);
 
         await _signalRService.ConnectAsync(loginResponse.AccessToken);
         return true;
@@ -103,8 +109,7 @@ public class AuthController
 
         var deviceId = ExtractDeviceId(loginResponse.AccessToken);
         await _keyStorageService.SavePrivateKeyAsync(deviceId, keyPair.privateKeyPem);
-        await _keyStorageService.SaveTokensAsync(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime);
-        await _keyStorageService.SaveAccountAsync(new LocalUser
+        var account = new LocalUser
         {
             Id = loginResponse.User.Id,
             DisplayName = loginResponse.User.DisplayName,
@@ -112,7 +117,10 @@ public class AuthController
             AvatarUrl = loginResponse.User.AvatarUrl,
             DeviceId = deviceId,
             LastLoginAt = DateTime.UtcNow
-        });
+        };
+        await _keyStorageService.SaveTokensAsync(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime, account);
+        await _keyStorageService.SaveAccountAsync(account);
+        _authSession.SetSession(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime, account);
 
         await _signalRService.ConnectAsync(loginResponse.AccessToken);
         return true;
@@ -124,7 +132,9 @@ public class AuthController
         await _authApiService.LogoutAsync();
         await _signalRService.DisconnectAsync();
         _sessionCache.ClearAll();
-        await _keyStorageService.ClearTokensAsync();
+        var account = _authSession.CurrentAccount;
+        _authSession.Clear();
+        await _keyStorageService.ClearTokensAsync(account);
     }
 
     private static string ExtractDeviceId(string accessToken)

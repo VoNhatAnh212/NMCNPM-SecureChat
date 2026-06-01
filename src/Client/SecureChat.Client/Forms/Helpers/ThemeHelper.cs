@@ -47,17 +47,17 @@ public static class ThemeHelper
     /// </summary>
     public static void UseDarkTheme()
     {
-        BgPrimary = Color.FromArgb(18, 18, 18);
-        BgSecondary = Color.FromArgb(26, 26, 26);
-        BgCard = Color.FromArgb(36, 36, 36);
-        BgHover = Color.FromArgb(46, 46, 46);
-        AccentBlue = Color.FromArgb(88, 166, 255);
-        AccentGreen = Color.FromArgb(63, 185, 80);
-        TextPrimary = Color.FromArgb(240, 240, 240);
-        TextSecondary = Color.FromArgb(160, 160, 160);
-        TextMuted = Color.FromArgb(100, 100, 100);
-        Danger = Color.FromArgb(248, 81, 73);
-        Border = Color.FromArgb(48, 54, 61);
+        BgPrimary = Color.FromArgb(17, 24, 39);
+        BgSecondary = Color.FromArgb(24, 33, 48);
+        BgCard = Color.FromArgb(31, 42, 59);
+        BgHover = Color.FromArgb(43, 58, 82);
+        AccentBlue = Color.FromArgb(96, 165, 250);
+        AccentGreen = Color.FromArgb(52, 211, 153);
+        TextPrimary = Color.FromArgb(248, 250, 252);
+        TextSecondary = Color.FromArgb(203, 213, 225);
+        TextMuted = Color.FromArgb(148, 163, 184);
+        Danger = Color.FromArgb(248, 113, 113);
+        Border = Color.FromArgb(71, 85, 105);
     }
 
     /// <summary>
@@ -65,17 +65,17 @@ public static class ThemeHelper
     /// </summary>
     public static void UseLightTheme()
     {
-        BgPrimary = Color.FromArgb(246, 248, 250);
-        BgSecondary = Color.FromArgb(255, 255, 255);
+        BgPrimary = Color.FromArgb(248, 250, 252);
+        BgSecondary = Color.FromArgb(241, 245, 249);
         BgCard = Color.FromArgb(255, 255, 255);
-        BgHover = Color.FromArgb(235, 240, 246);
-        AccentBlue = Color.FromArgb(9, 105, 218);
-        AccentGreen = Color.FromArgb(31, 136, 61);
-        TextPrimary = Color.FromArgb(31, 35, 40);
-        TextSecondary = Color.FromArgb(87, 96, 106);
-        TextMuted = Color.FromArgb(111, 119, 130);
-        Danger = Color.FromArgb(207, 34, 46);
-        Border = Color.FromArgb(208, 215, 222);
+        BgHover = Color.FromArgb(226, 232, 240);
+        AccentBlue = Color.FromArgb(37, 99, 235);
+        AccentGreen = Color.FromArgb(5, 150, 105);
+        TextPrimary = Color.FromArgb(15, 23, 42);
+        TextSecondary = Color.FromArgb(51, 65, 85);
+        TextMuted = Color.FromArgb(100, 116, 139);
+        Danger = Color.FromArgb(220, 38, 38);
+        Border = Color.FromArgb(203, 213, 225);
     }
 
     /// <summary>
@@ -87,6 +87,70 @@ public static class ThemeHelper
         form.BackColor = BgPrimary;
         form.ForeColor = TextPrimary;
         form.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+        ApplyThemeTree(form);
+    }
+
+    /// <summary>
+    /// Applies the active palette to a control tree.
+    /// </summary>
+    public static void ApplyThemeTree(Control root)
+    {
+        ApplyControlColors(root);
+        foreach (Control child in root.Controls)
+        {
+            ApplyThemeTree(child);
+        }
+
+        root.Invalidate(true);
+    }
+
+    /// <summary>
+    /// Applies the active palette to all open forms.
+    /// </summary>
+    public static void ApplyThemeToOpenForms()
+    {
+        foreach (Form form in Application.OpenForms)
+        {
+            ApplyTheme(form);
+        }
+    }
+
+    private static void ApplyControlColors(Control control)
+    {
+        switch (control)
+        {
+            case Form:
+            case UserControl:
+                control.BackColor = BgPrimary;
+                control.ForeColor = TextPrimary;
+                break;
+            case Panel or TableLayoutPanel or FlowLayoutPanel:
+                control.BackColor = BgPrimary;
+                control.ForeColor = TextPrimary;
+                break;
+            case TextBoxBase:
+            case ListBox:
+            case ListView:
+            case ComboBox:
+                control.BackColor = BgCard;
+                control.ForeColor = TextPrimary;
+                break;
+            case Button button:
+                button.BackColor = BgCard;
+                button.ForeColor = TextPrimary;
+                button.FlatStyle = FlatStyle.Flat;
+                button.FlatAppearance.BorderColor = Border;
+                break;
+            case Label:
+            case CheckBox:
+            case RadioButton:
+                control.BackColor = Color.Transparent;
+                control.ForeColor = TextPrimary;
+                break;
+            default:
+                control.ForeColor = TextPrimary;
+                break;
+        }
     }
 
     /// <summary>

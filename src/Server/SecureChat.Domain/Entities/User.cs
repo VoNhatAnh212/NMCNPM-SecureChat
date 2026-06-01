@@ -26,8 +26,8 @@ public class User
         : this()
     {
         Id = Guid.NewGuid();
-        Email = email;
-        DisplayName = displayName;
+        Email = (email ?? string.Empty).Trim().ToLowerInvariant();
+        DisplayName = (displayName ?? string.Empty).Trim();
         CreatedAt = DateTimeOffset.UtcNow;
         UpdatedAt = CreatedAt;
     }

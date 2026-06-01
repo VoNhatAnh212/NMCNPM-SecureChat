@@ -50,6 +50,9 @@ public class AppDbContext : DbContext
     /// <summary>Gets or sets chats.</summary>
     public DbSet<Chat> Chats => Set<Chat>();
 
+    /// <summary>Gets or sets per-user hidden chat states.</summary>
+    public DbSet<HiddenChat> HiddenChats => Set<HiddenChat>();
+
     /// <summary>Gets or sets messages.</summary>
     public DbSet<Message> Messages => Set<Message>();
 
@@ -80,6 +83,7 @@ public class AppDbContext : DbContext
         modelBuilder.ApplyConfiguration(new GroupMemberConfiguration());
         modelBuilder.ApplyConfiguration(new GroupKeyConfiguration());
         modelBuilder.ApplyConfiguration(new ChatConfiguration());
+        modelBuilder.ApplyConfiguration(new HiddenChatConfiguration());
         modelBuilder.ApplyConfiguration(new MessageConfiguration());
         modelBuilder.ApplyConfiguration(new AttachmentConfiguration());
         modelBuilder.ApplyConfiguration(new RefreshTokenConfiguration());

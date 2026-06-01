@@ -31,12 +31,12 @@ public class UserRepository : BaseRepository<User>, IUserRepository
     public async Task<User?> GetByEmailAsync(string email)
     {
         _logger.LogDebug("Getting user by email {Email}.", email);
-        var normalizedEmail = email.ToLowerInvariant();
+        var normalizedEmail = (email ?? string.Empty).Trim().ToLowerInvariant();
 
         return await Context.Users
             .Include(user => user.Devices)
             .Include(user => user.PublicKeys)
-            .FirstOrDefaultAsync(user => user.Email.ToLower() == normalizedEmail);
+            .FirstOrDefaultAsync(user => user.Email.Trim().ToLower() == normalizedEmail);
     }
 
     /// <inheritdoc />
@@ -55,7 +55,7 @@ public class UserRepository : BaseRepository<User>, IUserRepository
     {
         _logger.LogDebug("Searching users by query {Query} with limit {Limit}.", query, limit);
 
-        var normalizedQuery = query.ToLowerInvariant();
+        var normalizedQuery = (query ?? string.Empty).Trim().ToLowerInvariant();
         var take = Math.Max(1, limit);
 
         return await Context.Users

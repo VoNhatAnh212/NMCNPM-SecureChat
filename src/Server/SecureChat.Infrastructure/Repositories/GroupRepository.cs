@@ -28,7 +28,7 @@ public class GroupRepository : BaseRepository<Group>, IGroupRepository
         _logger.LogDebug("Getting groups for member {MemberId}.", memberId);
 
         return await Context.Groups
-            .Where(group => group.Members.Any(member => member.UserId == memberId))
+            .Where(group => group.IsActive && group.Members.Any(member => member.UserId == memberId))
             .Include(group => group.Members)
             .ThenInclude(member => member.User)
             .ToListAsync();
@@ -42,6 +42,6 @@ public class GroupRepository : BaseRepository<Group>, IGroupRepository
         return await Context.Groups
             .Include(group => group.Members)
             .ThenInclude(member => member.User)
-            .FirstOrDefaultAsync(group => group.Id == groupId);
+            .FirstOrDefaultAsync(group => group.Id == groupId && group.IsActive);
     }
 }

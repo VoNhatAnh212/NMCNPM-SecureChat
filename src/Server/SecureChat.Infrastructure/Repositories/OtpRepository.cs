@@ -28,11 +28,11 @@ public class OtpRepository : BaseRepository<OtpRequest>, IOtpRepository
     {
         _logger.LogDebug("Getting valid OTP for email {Email}.", email);
 
-        var normalizedEmail = email.ToLowerInvariant();
+        var normalizedEmail = (email ?? string.Empty).Trim().ToLowerInvariant();
         var utcNow = DateTimeOffset.UtcNow;
 
         return await Context.OtpRequests
-            .Where(otpRequest => otpRequest.Email.ToLower() == normalizedEmail)
+            .Where(otpRequest => otpRequest.Email.Trim().ToLower() == normalizedEmail)
             .Where(otpRequest => otpRequest.OtpCode == otpCode)
             .Where(otpRequest => !otpRequest.IsUsed)
             .Where(otpRequest => otpRequest.ExpiresAt > utcNow)

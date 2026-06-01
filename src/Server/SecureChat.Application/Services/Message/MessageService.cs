@@ -12,6 +12,7 @@ using SecureChat.Shared.DTOs.User;
 using SecureChat.Shared.Enums;
 using DomainBlockedUser = SecureChat.Domain.Entities.BlockedUser;
 using DomainChat = SecureChat.Domain.Entities.Chat;
+using DomainHiddenChat = SecureChat.Domain.Entities.HiddenChat;
 using DomainMessage = SecureChat.Domain.Entities.Message;
 
 namespace SecureChat.Application.Services.Message;
@@ -29,6 +30,7 @@ public class MessageService : IMessageService
     private readonly IUserRepository _userRepository;
     private readonly IFriendRepository _friendRepository;
     private readonly IRepository<DomainBlockedUser> _blockedUserRepository;
+    private readonly IRepository<DomainHiddenChat> _hiddenChatRepository;
     private readonly ILogger<MessageService> _logger;
 
     /// <summary>
@@ -41,6 +43,7 @@ public class MessageService : IMessageService
         IUserRepository userRepository,
         IFriendRepository friendRepository,
         IRepository<DomainBlockedUser> blockedUserRepository,
+        IRepository<DomainHiddenChat> hiddenChatRepository,
         ILogger<MessageService> logger)
     {
         _chatRepository = chatRepository;
@@ -49,6 +52,7 @@ public class MessageService : IMessageService
         _userRepository = userRepository;
         _friendRepository = friendRepository;
         _blockedUserRepository = blockedUserRepository;
+        _hiddenChatRepository = hiddenChatRepository;
         _logger = logger;
     }
 
@@ -73,6 +77,7 @@ public class MessageService : IMessageService
         };
 
         await _messageRepository.AddAsync(message);
+        await UnhideChatForParticipantsAsync(chat);
         foreach (var attachmentId in dto.AttachmentIds)
         {
             var attachment = await _attachmentRepository.GetByIdAsync(attachmentId);
@@ -105,13 +110,30 @@ public class MessageService : IMessageService
     public async Task<IReadOnlyCollection<ChatSummaryDto>> GetChatListAsync(Guid userId)
     {
         var chats = await _chatRepository.GetUserChatsAsync(userId);
+        var hiddenChats = await _hiddenChatRepository.GetAllAsync();
+        var hiddenByChatId = hiddenChats
+            .Where(hidden => hidden.UserId == userId)
+            .ToDictionary(hidden => hidden.ChatId, hidden => hidden.HiddenAt);
+
         return chats
+            .Where(chat => chat.Type != ChatType.Group || chat.Group?.IsActive == true)
+            .Where(chat =>
+            {
+                if (!hiddenByChatId.TryGetValue(chat.Id, out var hiddenAt))
+                {
+                    return true;
+                }
+
+                var lastMessage = chat.Messages.OrderByDescending(message => message.SentAt).FirstOrDefault();
+                return lastMessage is not null && lastMessage.SentAt > hiddenAt;
+            })
             .Select(chat =>
             {
                 var lastMessage = chat.Messages.OrderByDescending(message => message.SentAt).FirstOrDefault();
                 return new ChatSummaryDto
                 {
                     Id = chat.Id,
+                    GroupId = chat.GroupId,
                     Name = chat.Type == ChatType.Group ? chat.Group?.Name ?? string.Empty : GetPersonalChatName(chat, userId),
                     AvatarUrl = chat.Type == ChatType.Group ? chat.Group?.AvatarUrl ?? string.Empty : string.Empty,
                     LastMessagePreview = lastMessage is null ? string.Empty : Encode(lastMessage.EncryptedContent),
@@ -182,14 +204,13 @@ public class MessageService : IMessageService
         var chat = await GetChatForMemberAsync(chatId, requesterId);
         await EnsurePersonalChatNotBlockedAsync(chat, requesterId);
         SessionKeys.TryGetValue(GetSessionKeyKey(chatId, deviceId), out var sessionKey);
-        return sessionKey;
-    }
+        if (sessionKey is not null && DateTimeOffset.UtcNow - sessionKey.CreatedAt > TimeSpan.FromMinutes(30))
+        {
+            SessionKeys.TryRemove(GetSessionKeyKey(chatId, deviceId), out _);
+            return null;
+        }
 
-    /// <inheritdoc />
-    public async Task MarkMessagesReadAsync(Guid chatId, Guid userId)
-    {
-        await GetChatForMemberAsync(chatId, userId);
-        await _messageRepository.MarkAsReadAsync(chatId, userId);
+        return sessionKey;
     }
 
     /// <inheritdoc />
@@ -199,9 +220,39 @@ public class MessageService : IMessageService
         return chat.Participants.Select(user => user.Id).ToList();
     }
 
+    /// <inheritdoc />
+    public async Task DeleteChatForUserAsync(Guid chatId, Guid userId)
+    {
+        var chat = await GetChatForMemberAsync(chatId, userId);
+        var hiddenChats = await _hiddenChatRepository.GetAllAsync();
+        var existing = hiddenChats.FirstOrDefault(hidden => hidden.ChatId == chatId && hidden.UserId == userId);
+        if (existing is null)
+        {
+            await _hiddenChatRepository.AddAsync(new DomainHiddenChat(chat.Id, userId));
+            return;
+        }
+
+        existing.HiddenAt = DateTimeOffset.UtcNow;
+        await _hiddenChatRepository.UpdateAsync(existing);
+    }
+
+    private async Task UnhideChatForParticipantsAsync(DomainChat chat)
+    {
+        var hiddenChats = await _hiddenChatRepository.GetAllAsync();
+        foreach (var hidden in hiddenChats.Where(hidden => hidden.ChatId == chat.Id).ToList())
+        {
+            await _hiddenChatRepository.DeleteAsync(hidden.Id);
+        }
+    }
+
     private async Task<DomainChat> GetChatForMemberAsync(Guid chatId, Guid userId)
     {
         var chat = await _chatRepository.GetByIdAsync(chatId) ?? throw new DomainException($"Chat '{chatId}' was not found.", 404);
+        if (chat.Type == ChatType.Group && chat.Group?.IsActive != true)
+        {
+            throw new DomainException("This group has been dissolved.", 410);
+        }
+
         if (!chat.Participants.Any(user => user.Id == userId))
         {
             throw new UnauthorizedException("The user is not a member of this chat.");
@@ -272,6 +323,7 @@ public class MessageService : IMessageService
         {
             Id = chat.Id,
             Type = chat.Type,
+            GroupId = chat.GroupId,
             Name = chat.Type == ChatType.Group ? chat.Group?.Name ?? string.Empty : string.Empty,
             AvatarUrl = chat.Type == ChatType.Group ? chat.Group?.AvatarUrl ?? string.Empty : string.Empty,
             Members = chat.Participants.Select(user => new UserDto
@@ -280,7 +332,7 @@ public class MessageService : IMessageService
                 DisplayName = user.DisplayName,
                 Email = user.Email,
                 AvatarUrl = user.AvatarUrl,
-                IsOnline = user.IsOnline,
+                IsOnline = IsCurrentlyOnline(user),
                 LastSeen = user.LastSeen
             }).ToList(),
             LastMessage = lastMessage is null ? null : MapMessage(lastMessage),
@@ -291,6 +343,11 @@ public class MessageService : IMessageService
     private static string GetPersonalChatName(DomainChat chat, Guid currentUserId)
     {
         return chat.Participants.FirstOrDefault(user => user.Id != currentUserId)?.DisplayName ?? string.Empty;
+    }
+
+    private static bool IsCurrentlyOnline(SecureChat.Domain.Entities.User user)
+    {
+        return user.IsOnline && user.LastSeen is not null && DateTimeOffset.UtcNow - user.LastSeen.Value <= TimeSpan.FromSeconds(30);
     }
 
     private static byte[] Decode(string value)

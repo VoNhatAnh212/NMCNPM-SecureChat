@@ -46,6 +46,4 @@ public interface ISignalRService
     /// <summary>Sends typing status.</summary>
     Task SendTypingAsync(Guid chatId, bool isTyping);
 
-    /// <summary>Marks messages as read.</summary>
-    Task MarkReadAsync(Guid chatId);
 }

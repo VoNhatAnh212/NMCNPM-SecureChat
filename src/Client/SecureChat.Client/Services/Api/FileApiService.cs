@@ -1,6 +1,7 @@
 #nullable enable
 
 using SecureChat.Shared.DTOs.File;
+using SecureChat.Client.Services.Storage;
 
 namespace SecureChat.Client.Services.Api;
 
@@ -10,11 +11,13 @@ namespace SecureChat.Client.Services.Api;
 public class FileApiService
 {
     private readonly IApiClient _apiClient;
+    private readonly UserDataPathService _userDataPathService;
 
     /// <summary>Initializes a new instance of the <see cref="FileApiService"/> class.</summary>
-    public FileApiService(IApiClient apiClient)
+    public FileApiService(IApiClient apiClient, UserDataPathService userDataPathService)
     {
         _apiClient = apiClient;
+        _userDataPathService = userDataPathService;
     }
 
     /// <summary>Initiates an upload.</summary>
@@ -39,7 +42,9 @@ public class FileApiService
     /// <summary>Downloads encrypted file bytes into a temporary file.</summary>
     public async Task<string> DownloadEncryptedFileToTempAsync(Guid attachmentId)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.securechat");
+        var tempPath = _userDataPathService.GetLocalPath("Temp");
+        Directory.CreateDirectory(tempPath);
+        var path = Path.Combine(tempPath, $"{Guid.NewGuid():N}.securechat");
         await DownloadEncryptedFileAsync(attachmentId, path);
         return path;
     }

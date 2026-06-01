@@ -89,13 +89,6 @@ public class SignalRService : ISignalRService
         await _connection!.SendAsync("SendTypingAsync", chatId, isTyping);
     }
 
-    /// <inheritdoc />
-    public async Task MarkReadAsync(Guid chatId)
-    {
-        EnsureConnected();
-        await _connection!.InvokeAsync("MarkMessagesReadAsync", chatId);
-    }
-
     private void RegisterHandlers(HubConnection connection)
     {
         connection.On<MessageDto>(SignalREvents.ReceiveMessage, message => MessageReceived?.Invoke(this, message));
@@ -103,8 +96,36 @@ public class SignalRService : ISignalRService
         connection.On<OnlineStatusEventArgs>(SignalREvents.OnlineStatus, args => OnlineStatusChanged?.Invoke(this, args));
         connection.On<FriendRequestDto>(SignalREvents.FriendRequest, request => FriendRequestReceived?.Invoke(this, request));
         connection.On<JsonElement>(SignalREvents.FriendRequestResponse, payload => FriendRequestResponded?.Invoke(this, payload.GetRawText()));
-        connection.On<GroupUpdateEventArgs>(SignalREvents.GroupUpdate, args => GroupUpdated?.Invoke(this, args));
+        connection.On<JsonElement>(SignalREvents.GroupUpdate, payload =>
+        {
+            if (!TryReadGuid(payload, "groupId", out var groupId))
+            {
+                return;
+            }
+
+            var eventType = TryReadString(payload, "eventType") ?? string.Empty;
+            var data = payload.TryGetProperty("data", out var dataElement) ? dataElement.GetRawText() : null;
+            GroupUpdated?.Invoke(this, new GroupUpdateEventArgs(groupId, eventType, data));
+        });
         connection.On<JsonElement>(SignalREvents.DeviceUpdate, payload => DeviceRevoked?.Invoke(this, payload.GetRawText()));
+    }
+
+    private static bool TryReadGuid(JsonElement payload, string propertyName, out Guid value)
+    {
+        value = Guid.Empty;
+        if (!payload.TryGetProperty(propertyName, out var element))
+        {
+            return false;
+        }
+
+        return element.ValueKind == JsonValueKind.String && Guid.TryParse(element.GetString(), out value);
+    }
+
+    private static string? TryReadString(JsonElement payload, string propertyName)
+    {
+        return payload.TryGetProperty(propertyName, out var element) && element.ValueKind == JsonValueKind.String
+            ? element.GetString()
+            : null;
     }
 
     private void EnsureConnected()

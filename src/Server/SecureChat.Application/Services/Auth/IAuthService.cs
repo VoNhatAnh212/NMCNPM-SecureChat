@@ -45,9 +45,21 @@ public interface IAuthService
     /// <returns>A task that represents the asynchronous operation.</returns>
     Task LogoutAsync(Guid deviceId);
 
+    /// <summary>Logs all devices out by revoking all refresh tokens for a user.</summary>
+    /// <param name="userId">The user identifier.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    Task LogoutAllDevicesAsync(Guid userId);
+
     /// <summary>Registers a new trusted device for a user.</summary>
     /// <param name="userId">The user identifier.</param>
     /// <param name="request">The device registration request.</param>
     /// <returns>The registered device.</returns>
     Task<DeviceDto> RegisterDeviceAsync(Guid userId, RegisterDeviceDto request);
+
+    /// <summary>Rotates the public key for the current device.</summary>
+    /// <param name="userId">The user identifier.</param>
+    /// <param name="deviceId">The current device identifier.</param>
+    /// <param name="request">The new key material.</param>
+    /// <returns>The updated device.</returns>
+    Task<DeviceDto> RotateCurrentDeviceKeyAsync(Guid userId, Guid deviceId, RegisterDeviceDto request);
 }

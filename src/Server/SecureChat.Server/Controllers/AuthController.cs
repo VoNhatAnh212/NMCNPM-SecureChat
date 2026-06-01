@@ -101,6 +101,17 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<bool>.Ok(true));
     }
 
+    /// <summary>Logs out all devices for the current user.</summary>
+    [Authorize]
+    [HttpPost("logout-all")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<ApiResponse<bool>>> LogoutAllDevicesAsync()
+    {
+        await _authService.LogoutAllDevicesAsync(User.GetUserId());
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
     /// <summary>Registers a new device for the current user.</summary>
     [Authorize]
     [HttpPost("devices/register")]
@@ -109,6 +120,17 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<ApiResponse<DeviceDto>>> RegisterDeviceAsync([FromBody] RegisterDeviceDto request)
     {
         var response = await _authService.RegisterDeviceAsync(User.GetUserId(), request);
+        return Ok(ApiResponse<DeviceDto>.Ok(response));
+    }
+
+    /// <summary>Rotates the public key for the current device.</summary>
+    [Authorize]
+    [HttpPut("devices/current/key")]
+    [ProducesResponseType(typeof(ApiResponse<DeviceDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<ApiResponse<DeviceDto>>> RotateCurrentDeviceKeyAsync([FromBody] RegisterDeviceDto request)
+    {
+        var response = await _authService.RotateCurrentDeviceKeyAsync(User.GetUserId(), User.GetDeviceId(), request);
         return Ok(ApiResponse<DeviceDto>.Ok(response));
     }
 

@@ -35,6 +35,9 @@ public class LeftSidebarPanel : UserControl
     private readonly Button _createGroupButton;
     private readonly List<ChatSummaryDto> _chatSummaries = new();
     private readonly List<FriendDto> _friends = new();
+    private readonly Dictionary<Guid, int> _localUnreadCounts = new();
+    private Guid? _activeReadChatId;
+    private Guid _currentUserId;
     private string _activeTab = "Chats";
 
     /// <summary>
@@ -70,6 +73,9 @@ public class LeftSidebarPanel : UserControl
     /// <summary>Occurs when a friend is selected.</summary>
     public event EventHandler<FriendSelectedEventArgs>? FriendSelected;
 
+    /// <summary>Occurs when a chat delete action is requested.</summary>
+    public event EventHandler<ChatSelectedEventArgs>? ChatDeleteRequested;
+
     /// <summary>Occurs when settings are requested.</summary>
     public event Action? SettingsRequested;
 
@@ -101,11 +107,21 @@ public class LeftSidebarPanel : UserControl
         _displayNameLabel.Text = string.IsNullOrWhiteSpace(displayName) ? "SecureChat User" : displayName;
     }
 
+    /// <summary>Sets the current user identity shown in the sidebar.</summary>
+    public void SetCurrentUser(Guid userId, string displayName)
+    {
+        _currentUserId = userId;
+        SetCurrentUser(displayName);
+    }
+
     /// <summary>Loads chat summaries into the sidebar.</summary>
     public void SetChats(IEnumerable<ChatSummaryDto> chats)
     {
         _chatSummaries.Clear();
-        _chatSummaries.AddRange(chats);
+        _chatSummaries.AddRange(chats.Select(chat => chat with
+        {
+            UnreadCount = _localUnreadCounts.GetValueOrDefault(chat.Id)
+        }));
         RenderActiveList();
     }
 
@@ -113,7 +129,11 @@ public class LeftSidebarPanel : UserControl
     public void SetFriends(IEnumerable<FriendDto> friends)
     {
         _friends.Clear();
-        _friends.AddRange(friends.OrderBy(friend => friend.DisplayName));
+        _friends.AddRange(friends
+            .Where(friend => friend.UserId != Guid.Empty && friend.UserId != _currentUserId)
+            .GroupBy(friend => friend.UserId)
+            .Select(group => group.First())
+            .OrderBy(friend => friend.DisplayName));
         RenderActiveList();
     }
 
@@ -136,12 +156,23 @@ public class LeftSidebarPanel : UserControl
     /// <summary>Updates a chat item after a received message.</summary>
     public void UpdateChatPreview(Guid chatId, string preview, DateTimeOffset sentAt, bool incrementUnread = true)
     {
-        _chatListSurface.UpdateChatPreview(chatId, preview, sentAt, incrementUnread);
+        if (incrementUnread && _activeReadChatId != chatId)
+        {
+            _localUnreadCounts[chatId] = _localUnreadCounts.GetValueOrDefault(chatId) + 1;
+        }
+        else
+        {
+            _localUnreadCounts[chatId] = 0;
+        }
+
+        _chatListSurface.UpdateChatPreview(chatId, preview, sentAt, _localUnreadCounts.GetValueOrDefault(chatId));
     }
 
     /// <summary>Clears the unread badge for a chat after the user opens it.</summary>
     public void MarkChatRead(Guid chatId)
     {
+        _activeReadChatId = chatId;
+        _localUnreadCounts[chatId] = 0;
         _chatListSurface.MarkChatRead(chatId);
     }
 
@@ -235,6 +266,7 @@ public class LeftSidebarPanel : UserControl
 
             ChatSelected?.Invoke(this, new ChatSelectedEventArgs(chat));
         };
+        _chatListSurface.ChatDeleteRequested += (_, chat) => ChatDeleteRequested?.Invoke(this, new ChatSelectedEventArgs(chat));
 
         _blockUserButton.Text = "Block";
         _blockUserButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
@@ -310,6 +342,8 @@ public class LeftSidebarPanel : UserControl
     {
         if (_activeTab == "Friends")
         {
+            _chatListSurface.AllowItemMenu = false;
+            _chatListSurface.EmptyMessage = "No friends to show";
             _chatListSurface.SetChats(_friends.Select(friend => new ChatSummaryDto
             {
                 Id = friend.UserId,
@@ -321,6 +355,8 @@ public class LeftSidebarPanel : UserControl
             return;
         }
 
+        _chatListSurface.AllowItemMenu = _activeTab == "Chats";
+        _chatListSurface.EmptyMessage = _activeTab == "Groups" ? "No groups yet" : "No chats yet";
         _chatListSurface.SetChats(_activeTab == "Groups"
             ? _chatSummaries.Where(chat => chat.IsGroup)
             : _chatSummaries);
@@ -408,6 +444,14 @@ public class LeftSidebarPanel : UserControl
 
         public event EventHandler<ChatSummaryDto>? ChatSelected;
 
+        public event EventHandler<ChatSummaryDto>? ChatDeleteRequested;
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public string EmptyMessage { get; set; } = "No chats yet";
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool AllowItemMenu { get; set; }
+
         public void SetChats(IEnumerable<ChatSummaryDto> chats)
         {
             _allChats.Clear();
@@ -428,7 +472,7 @@ public class LeftSidebarPanel : UserControl
             Invalidate();
         }
 
-        public void UpdateChatPreview(Guid chatId, string preview, DateTimeOffset sentAt, bool incrementUnread = true)
+        public void UpdateChatPreview(Guid chatId, string preview, DateTimeOffset sentAt, int unreadCount)
         {
             var index = _allChats.FindIndex(chat => chat.Id == chatId);
             if (index < 0)
@@ -440,7 +484,7 @@ public class LeftSidebarPanel : UserControl
             {
                 LastMessagePreview = preview,
                 LastMessageAt = sentAt,
-                UnreadCount = incrementUnread ? _allChats[index].UnreadCount + 1 : 0
+                UnreadCount = unreadCount
             };
             Filter(string.Empty);
         }
@@ -477,6 +521,12 @@ public class LeftSidebarPanel : UserControl
                 return;
             }
 
+            if (AllowItemMenu && GetOptionsRectangle(index).Contains(e.Location.X, e.Location.Y - AutoScrollPosition.Y))
+            {
+                ShowItemMenu(index, e.Location);
+                return;
+            }
+
             _selectedIndex = index;
             ChatSelected?.Invoke(this, _visibleChats[index]);
             Invalidate();
@@ -486,6 +536,18 @@ public class LeftSidebarPanel : UserControl
         {
             base.OnPaint(e);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            if (_visibleChats.Count == 0)
+            {
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    EmptyMessage,
+                    new Font("Segoe UI", 10F, FontStyle.Regular),
+                    ClientRectangle,
+                    ThemeHelper.TextMuted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                return;
+            }
+
             e.Graphics.TranslateTransform(0, AutoScrollPosition.Y);
             var first = Math.Max(0, (-AutoScrollPosition.Y) / ItemHeight);
             var last = Math.Min(_visibleChats.Count - 1, first + Height / ItemHeight + 2);
@@ -513,6 +575,12 @@ public class LeftSidebarPanel : UserControl
             TextRenderer.DrawText(graphics, chat.LastMessagePreview, new Font("Segoe UI", 8.5F), new Rectangle(rect.Left + 70, rect.Top + 34, rect.Width - 100, 20), ThemeHelper.TextMuted, TextFormatFlags.EndEllipsis);
             var time = chat.LastMessageAt?.LocalDateTime.ToShortTimeString() ?? string.Empty;
             TextRenderer.DrawText(graphics, time, new Font("Segoe UI", 8F), new Rectangle(rect.Right - 64, rect.Top + 12, 56, 18), ThemeHelper.TextMuted, TextFormatFlags.Right);
+            if (AllowItemMenu && (index == _hoverIndex || index == _selectedIndex))
+            {
+                var optionsRect = GetOptionsRectangle(index);
+                TextRenderer.DrawText(graphics, "⋮", new Font("Segoe UI", 15F, FontStyle.Bold), optionsRect, ThemeHelper.TextSecondary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+
             if (chat.UnreadCount > 0)
             {
                 using var badge = new SolidBrush(ThemeHelper.Danger);
@@ -525,6 +593,25 @@ public class LeftSidebarPanel : UserControl
         {
             var index = y / ItemHeight;
             return index >= 0 && index < _visibleChats.Count ? index : -1;
+        }
+
+        private Rectangle GetOptionsRectangle(int index)
+        {
+            var rect = new Rectangle(8, index * ItemHeight + 6, Width - 24, ItemHeight - 10);
+            return new Rectangle(rect.Right - 36, rect.Top + 8, 28, 28);
+        }
+
+        private void ShowItemMenu(int index, Point location)
+        {
+            var menu = new ContextMenuStrip
+            {
+                BackColor = ThemeHelper.BgCard,
+                ForeColor = ThemeHelper.TextPrimary
+            };
+            var deleteItem = new ToolStripMenuItem("Delete chat");
+            deleteItem.Click += (_, _) => ChatDeleteRequested?.Invoke(this, _visibleChats[index]);
+            menu.Items.Add(deleteItem);
+            menu.Show(this, location);
         }
     }
 }

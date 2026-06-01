@@ -6,6 +6,7 @@ using SecureChat.Client.Forms.Controls;
 using SecureChat.Client.Forms.Helpers;
 using SecureChat.Client.Forms.Main.Controls;
 using SecureChat.Client.Models;
+using SecureChat.Client.Services;
 using SecureChat.Client.Services.Api;
 using SecureChat.Client.Services.Crypto;
 using SecureChat.Client.Services.SignalR;
@@ -29,6 +30,8 @@ public class ChatAreaPanel : UserControl
     private readonly AesGcmService _aesGcmService;
     private readonly RsaService _rsaService;
     private readonly KeyStorageService _keyStorageService;
+    private readonly AuthSessionService _authSession;
+    private readonly UserDataPathService _userDataPathService;
     private readonly SessionCache _sessionCache;
     private readonly LocalMessageStore _localMessageStore;
     private readonly FileApiService _fileApiService;
@@ -43,8 +46,11 @@ public class ChatAreaPanel : UserControl
     private readonly RoundedButton _sendButton;
     private readonly System.Windows.Forms.Timer _typingTimer;
     private readonly System.Windows.Forms.Timer _keyRotationTimer;
+    private readonly HashSet<Guid> _renderedMessageIds = new();
     private ChatSummaryDto? _activeChat;
     private Guid _currentUserId;
+    private int _loadVersion;
+    private bool _isSending;
     private int _typingDotCount;
 
     /// <summary>
@@ -58,6 +64,8 @@ public class ChatAreaPanel : UserControl
         FileApiService fileApiService,
         RsaService rsaService,
         KeyStorageService keyStorageService,
+        AuthSessionService authSession,
+        UserDataPathService userDataPathService,
         SessionCache sessionCache,
         LocalMessageStore localMessageStore)
     {
@@ -68,6 +76,8 @@ public class ChatAreaPanel : UserControl
         _fileApiService = fileApiService;
         _rsaService = rsaService;
         _keyStorageService = keyStorageService;
+        _authSession = authSession;
+        _userDataPathService = userDataPathService;
         _sessionCache = sessionCache;
         _localMessageStore = localMessageStore;
         DoubleBuffered = true;
@@ -103,14 +113,36 @@ public class ChatAreaPanel : UserControl
         _currentUserId = userId;
     }
 
+    /// <summary>Occurs after the current user sends a message.</summary>
+    public event EventHandler<MessageDto>? MessageSent;
+
+    /// <summary>Clears the active chat display.</summary>
+    public void ClearChat()
+    {
+        _loadVersion++;
+        _activeChat = null;
+        _renderedMessageIds.Clear();
+        _messagesPanel.Controls.Clear();
+        _nameLabel.Text = "Select a chat";
+        _statusLabel.Text = string.Empty;
+        SetComposerEnabled(false, "Select a chat");
+    }
+
     /// <summary>Loads a chat and renders messages.</summary>
     public async Task LoadChatAsync(ChatSummaryDto chat)
     {
+        var version = ++_loadVersion;
         _activeChat = chat;
         _nameLabel.Text = chat.Name;
         _statusLabel.Text = chat.IsGroup ? "Group chat" : "Online";
+        _renderedMessageIds.Clear();
         _messagesPanel.Controls.Clear();
         SetComposerEnabled(true, "Message");
+        await RefreshHeaderStatusAsync(chat);
+        if (version != _loadVersion || _activeChat?.Id != chat.Id)
+        {
+            return;
+        }
 
         List<MessageDto> messages;
         try
@@ -126,11 +158,13 @@ public class ChatAreaPanel : UserControl
         }
 
         var rendered = await Task.Run(() => messages.OrderBy(message => message.SentAt).ToList());
+        _messagesPanel.SuspendLayout();
         foreach (var message in rendered)
         {
-            await AddMessageAsync(message, message.SenderId == _currentUserId);
+            await AddMessageAsync(message, message.SenderId == _currentUserId, version);
         }
 
+        _messagesPanel.ResumeLayout(true);
         ScrollToBottom();
     }
 
@@ -240,6 +274,15 @@ public class ChatAreaPanel : UserControl
         form.ShowDialog(this);
     }
 
+    /// <summary>Refreshes the active chat header status from the server.</summary>
+    public async Task RefreshActiveChatStatusAsync()
+    {
+        if (_activeChat is not null)
+        {
+            await RefreshHeaderStatusAsync(_activeChat);
+        }
+    }
+
     /// <summary>Shows a typing indicator.</summary>
     public void ShowTyping(string displayName, bool isTyping)
     {
@@ -261,23 +304,49 @@ public class ChatAreaPanel : UserControl
         }
     }
 
-    private async Task AddMessageAsync(MessageDto message, bool isMine)
+    private async Task AddMessageAsync(MessageDto message, bool isMine, int? loadVersion = null)
     {
-        var plaintext = await TryDecryptMessageAsync(message);
-        if (InvokeRequired)
+        var activeChatId = _activeChat?.Id;
+        if (activeChatId is null || message.ChatId != activeChatId.Value)
         {
-            BeginInvoke(async () => await AddMessageAsync(message, isMine));
             return;
         }
 
-        if (_messagesPanel.Controls.Count > 100)
+        if (_renderedMessageIds.Contains(message.Id))
         {
+            return;
+        }
+
+        var plaintext = await TryDecryptMessageAsync(message);
+        if ((loadVersion is not null && loadVersion.Value != _loadVersion) || _activeChat?.Id != message.ChatId)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(async () => await AddMessageAsync(message, isMine, loadVersion));
+            return;
+        }
+
+        if (_renderedMessageIds.Contains(message.Id))
+        {
+            return;
+        }
+
+        if (_messagesPanel.Controls.Count >= 150)
+        {
+            if (_messagesPanel.Controls[0] is MessageBubbleControl removed && removed.Message is not null)
+            {
+                _renderedMessageIds.Remove(removed.Message.Id);
+            }
+
             _messagesPanel.Controls.RemoveAt(0);
         }
 
         var bubble = new MessageBubbleControl
         {
-            Width = Math.Max(320, _messagesPanel.ClientSize.Width - 24),
+            Width = GetMessageRowWidth(),
             Message = message,
             PlainText = plaintext,
             IsMine = isMine,
@@ -286,6 +355,17 @@ public class ChatAreaPanel : UserControl
         };
         bubble.AttachmentClicked += async (_, attachment) => await PreviewAttachmentAsync(message.ChatId, attachment);
         _messagesPanel.Controls.Add(bubble);
+        _renderedMessageIds.Add(message.Id);
+
+        var insertIndex = _messagesPanel.Controls
+            .OfType<MessageBubbleControl>()
+            .Where(control => control != bubble && control.Message is not null)
+            .Select((control, index) => new { Control = control, Index = index })
+            .FirstOrDefault(item => item.Control.Message!.SentAt > message.SentAt)?.Index;
+        if (insertIndex is not null)
+        {
+            _messagesPanel.Controls.SetChildIndex(bubble, insertIndex.Value);
+        }
     }
 
     private async Task PreviewAttachmentAsync(Guid chatId, AttachmentDto attachment)
@@ -300,13 +380,7 @@ public class ChatAreaPanel : UserControl
             }
 
             var encryptedPath = await _fileApiService.DownloadEncryptedFileToTempAsync(attachment.Id);
-            var plaintextPath = await _aesGcmService.DecryptFileAsync(
-                encryptedPath,
-                key,
-                Convert.FromBase64String(attachment.IV),
-                Convert.FromBase64String(attachment.AuthTag));
-            var previewPath = Path.Combine(Path.GetTempPath(), attachment.FileName);
-            File.Copy(plaintextPath, previewPath, overwrite: true);
+            var previewPath = await DecryptAttachmentToLocalCacheAsync(encryptedPath, key, attachment);
 
             if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             {
@@ -360,11 +434,7 @@ public class ChatAreaPanel : UserControl
         }
 
         var encryptedPath = await _fileApiService.DownloadEncryptedFileToTempAsync(attachment.Id);
-        var plaintextPath = await _aesGcmService.DecryptFileAsync(
-            encryptedPath,
-            key,
-            Convert.FromBase64String(attachment.IV),
-            Convert.FromBase64String(attachment.AuthTag));
+        var plaintextPath = await DecryptAttachmentToLocalCacheAsync(encryptedPath, key, attachment);
         File.Copy(plaintextPath, dialog.FileName, overwrite: true);
         MessageBox.Show(this, "File downloaded.", "Shared files", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
@@ -419,16 +489,31 @@ public class ChatAreaPanel : UserControl
 
     private async Task SendCurrentMessageAsync(IReadOnlyCollection<Guid> attachmentIds)
     {
-        if (_activeChat is null || (string.IsNullOrWhiteSpace(_messageTextBox.Text) && attachmentIds.Count == 0))
+        await SendCurrentMessageAsync(attachmentIds, null);
+    }
+
+    private async Task SendCurrentMessageAsync(IReadOnlyCollection<Guid> attachmentIds, string? explicitText)
+    {
+        if (_isSending)
         {
             return;
         }
 
-        var text = string.IsNullOrWhiteSpace(_messageTextBox.Text) ? string.Empty : _messageTextBox.Text.Trim();
+        if (_activeChat is null || (string.IsNullOrWhiteSpace(explicitText ?? _messageTextBox.Text) && attachmentIds.Count == 0))
+        {
+            return;
+        }
+
+        var text = explicitText is null
+            ? (string.IsNullOrWhiteSpace(_messageTextBox.Text) ? string.Empty : _messageTextBox.Text.Trim())
+            : explicitText;
         _messageTextBox.Text = string.Empty;
+        _isSending = true;
+        SetComposerEnabled(false, "Sending...", clearText: false);
         try
         {
             var key = await GetOrCreateSessionKeyForSendingAsync(_activeChat.Id);
+            await PublishSessionKeyAsync(_activeChat.Id, key);
             var encrypted = await _aesGcmService.EncryptStringAsync(text, key);
             var dto = new SendMessageDto
             {
@@ -446,15 +531,24 @@ public class ChatAreaPanel : UserControl
             await _localMessageStore.SavePlaintextAsync(persisted.Id, text);
             await AddMessageAsync(persisted, true);
             ScrollToBottom();
+            MessageSent?.Invoke(this, persisted);
         }
         catch (Exception ex)
         {
-            if (attachmentIds.Count == 0)
+            if (attachmentIds.Count == 0 && explicitText is null)
             {
                 _messageTextBox.Text = text;
             }
 
             MessageBox.Show(this, ex.Message, "Message not sent", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _isSending = false;
+            if (_activeChat is not null)
+            {
+                SetComposerEnabled(true, "Message", clearText: false);
+            }
         }
     }
 
@@ -499,10 +593,24 @@ public class ChatAreaPanel : UserControl
         return key;
     }
 
+    /// <summary>Forces the active chat to fetch or exchange a fresh session key on the next message operation.</summary>
+    public void ResetActiveSessionKey()
+    {
+        if (_activeChat is not null)
+        {
+            _sessionCache.RemoveSessionKey(_activeChat.Id.ToString());
+        }
+    }
+
     private async Task<LocalUser?> GetCurrentAccountAsync()
     {
+        if (_authSession.CurrentAccount is not null)
+        {
+            return _authSession.CurrentAccount;
+        }
+
         var accounts = await _keyStorageService.LoadAccountsAsync();
-        var tokens = await _keyStorageService.LoadTokensAsync();
+        var tokens = _authSession.GetTokens();
         var deviceId = ExtractClaim(tokens.access, "deviceId");
         if (!string.IsNullOrWhiteSpace(deviceId))
         {
@@ -588,6 +696,7 @@ public class ChatAreaPanel : UserControl
         }
 
         var key = await GetOrCreateSessionKeyForSendingAsync(_activeChat.Id);
+        await PublishSessionKeyAsync(_activeChat.Id, key);
         var encrypted = await _aesGcmService.EncryptFileAsync(dialog.FileName, key);
         var fileInfo = new FileInfo(dialog.FileName);
         var request = new UploadFileRequestDto
@@ -602,8 +711,7 @@ public class ChatAreaPanel : UserControl
 
         var upload = await _fileApiService.InitiateUploadAsync(request);
         await _fileApiService.UploadEncryptedFileAsync(upload.AttachmentId, encrypted.outputPath);
-        _messageTextBox.Text = fileInfo.Name;
-        await SendCurrentMessageAsync(new[] { upload.AttachmentId });
+        await SendCurrentMessageAsync(new[] { upload.AttachmentId }, string.Empty);
     }
 
     private void TypingTimerTick(object? sender, EventArgs e)
@@ -678,7 +786,7 @@ public class ChatAreaPanel : UserControl
         {
             foreach (Control control in _messagesPanel.Controls)
             {
-                control.Width = Math.Max(320, _messagesPanel.ClientSize.Width - 24);
+                control.Width = GetMessageRowWidth();
             }
         };
 
@@ -696,8 +804,9 @@ public class ChatAreaPanel : UserControl
         _typingLabel.Visible = false;
 
         _emojiButton.SetBounds(14, 18, 36, 36);
-        _emojiButton.Text = "😊";
+        _emojiButton.Text = "☺";
         ConfigureIconButton(_emojiButton);
+        _emojiButton.Click += EmojiButtonClick;
 
         _attachButton.SetBounds(56, 18, 36, 36);
         _attachButton.Text = "📎";
@@ -726,14 +835,43 @@ public class ChatAreaPanel : UserControl
         Controls.Add(_headerPanel);
     }
 
-    private void SetComposerEnabled(bool enabled, string placeholder)
+    private void SetComposerEnabled(bool enabled, string placeholder, bool clearText = true)
     {
         _messageTextBox.Enabled = enabled;
         _attachButton.Enabled = enabled;
         _emojiButton.Enabled = enabled;
         _sendButton.Enabled = enabled;
         _messageTextBox.PlaceholderText = placeholder;
-        _messageTextBox.Text = string.Empty;
+        if (clearText)
+        {
+            _messageTextBox.Text = string.Empty;
+        }
+    }
+
+    private int GetMessageRowWidth()
+    {
+        return Math.Max(320, _messagesPanel.ClientSize.Width - 24);
+    }
+
+    private void EmojiButtonClick(object? sender, EventArgs e)
+    {
+        var menu = new ContextMenuStrip
+        {
+            BackColor = ThemeHelper.BgCard,
+            ForeColor = ThemeHelper.TextPrimary
+        };
+        foreach (var emoji in new[] { "😀", "😂", "😊", "😍", "😢", "😭", "😡", "👍", "❤️", "🙏" })
+        {
+            var item = new ToolStripMenuItem(emoji);
+            item.Click += (_, _) =>
+            {
+                _messageTextBox.Text += emoji;
+                _messageTextBox.Focus();
+            };
+            menu.Items.Add(item);
+        }
+
+        menu.Show(_emojiButton, new Point(0, -menu.PreferredSize.Height));
     }
 
     private void HeaderPaint(object? sender, PaintEventArgs e)
@@ -745,6 +883,56 @@ public class ChatAreaPanel : UserControl
         TextRenderer.DrawText(e.Graphics, initial, new Font("Segoe UI", 12F, FontStyle.Bold), new Rectangle(18, 11, 38, 38), Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         using var pen = new Pen(ThemeHelper.Border);
         e.Graphics.DrawLine(pen, 0, 59, Width, 59);
+    }
+
+    private async Task RefreshHeaderStatusAsync(ChatSummaryDto chat)
+    {
+        try
+        {
+            var details = await _chatApiService.GetChatAsync(chat.Id);
+            if (chat.IsGroup)
+            {
+                _statusLabel.Text = $"{details.Members.Count} member(s)";
+                return;
+            }
+
+            var other = details.Members.FirstOrDefault(member => member.Id != _currentUserId);
+            if (other is not null)
+            {
+                _statusLabel.Text = other.IsOnline
+                    ? "Online"
+                    : other.LastSeen is null ? "Offline" : $"Offline, last seen {other.LastSeen.Value.LocalDateTime:g}";
+            }
+        }
+        catch
+        {
+            _statusLabel.Text = chat.IsGroup ? "Group chat" : "Offline";
+        }
+    }
+
+    private async Task<string> DecryptAttachmentToLocalCacheAsync(string encryptedPath, byte[] key, AttachmentDto attachment)
+    {
+        var localFileCachePath = _userDataPathService.GetLocalPath("Files");
+        Directory.CreateDirectory(localFileCachePath);
+        var safeName = string.Join("_", attachment.FileName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+        if (string.IsNullOrWhiteSpace(safeName))
+        {
+            safeName = "file";
+        }
+
+        var cachedPath = Path.Combine(localFileCachePath, $"{attachment.Id:N}_{safeName}");
+        if (File.Exists(cachedPath))
+        {
+            return cachedPath;
+        }
+
+        var plaintextPath = await _aesGcmService.DecryptFileAsync(
+            encryptedPath,
+            key,
+            Convert.FromBase64String(attachment.IV),
+            Convert.FromBase64String(attachment.AuthTag));
+        File.Copy(plaintextPath, cachedPath, overwrite: true);
+        return cachedPath;
     }
 
     private static void ConfigureIconButton(Button button)

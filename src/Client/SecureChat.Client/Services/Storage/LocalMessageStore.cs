@@ -9,12 +9,19 @@ namespace SecureChat.Client.Services.Storage;
 /// </summary>
 public class LocalMessageStore
 {
-    private readonly string _basePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SecureChat", "messages");
+    private readonly UserDataPathService _userDataPathService;
+
+    /// <summary>Initializes a new instance of the <see cref="LocalMessageStore"/> class.</summary>
+    public LocalMessageStore(UserDataPathService userDataPathService)
+    {
+        _userDataPathService = userDataPathService;
+    }
 
     /// <summary>Saves decrypted plaintext for a message.</summary>
     public async Task SavePlaintextAsync(Guid messageId, string plaintext)
     {
-        Directory.CreateDirectory(_basePath);
+        var basePath = GetBasePath();
+        Directory.CreateDirectory(basePath);
         var path = GetPath(messageId);
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new StoredMessage(plaintext, DateTimeOffset.UtcNow)));
     }
@@ -41,7 +48,12 @@ public class LocalMessageStore
 
     private string GetPath(Guid messageId)
     {
-        return Path.Combine(_basePath, $"{messageId:N}.json");
+        return Path.Combine(GetBasePath(), $"{messageId:N}.json");
+    }
+
+    private string GetBasePath()
+    {
+        return _userDataPathService.GetRoamingPath("messages");
     }
 
     private sealed record StoredMessage(string Plaintext, DateTimeOffset SavedAt);

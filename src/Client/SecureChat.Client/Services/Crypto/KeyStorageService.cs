@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SecureChat.Client.Models;
+using SecureChat.Client.Services.Storage;
 
 namespace SecureChat.Client.Services.Crypto;
 
@@ -98,14 +99,15 @@ public class KeyStorageService
     }
 
     /// <summary>Saves access and refresh tokens protected by DPAPI.</summary>
-    public async Task SaveTokensAsync(string accessToken, string refreshToken, DateTime expiresAt)
+    public async Task SaveTokensAsync(string accessToken, string refreshToken, DateTime expiresAt, LocalUser? account = null)
     {
         try
         {
-            Directory.CreateDirectory(_basePath);
+            var path = GetTokenPath(account);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var payload = JsonSerializer.Serialize(new TokenStore(accessToken, refreshToken, expiresAt));
             var protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(payload), null, DataProtectionScope.CurrentUser);
-            await System.IO.File.WriteAllBytesAsync(_tokensPath, protectedBytes);
+            await System.IO.File.WriteAllBytesAsync(path, protectedBytes);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
         {
@@ -115,16 +117,22 @@ public class KeyStorageService
     }
 
     /// <summary>Loads access and refresh tokens protected by DPAPI.</summary>
-    public async Task<(string? access, string? refresh, DateTime? expiry)> LoadTokensAsync()
+    public async Task<(string? access, string? refresh, DateTime? expiry)> LoadTokensAsync(LocalUser? account = null)
     {
         try
         {
-            if (!System.IO.File.Exists(_tokensPath))
+            var path = GetTokenPath(account);
+            if (!System.IO.File.Exists(path) && account is not null)
+            {
+                path = _tokensPath;
+            }
+
+            if (!System.IO.File.Exists(path))
             {
                 return (null, null, null);
             }
 
-            var protectedBytes = await System.IO.File.ReadAllBytesAsync(_tokensPath);
+            var protectedBytes = await System.IO.File.ReadAllBytesAsync(path);
             var jsonBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
             var tokenStore = JsonSerializer.Deserialize<TokenStore>(Encoding.UTF8.GetString(jsonBytes));
             return (tokenStore?.AccessToken, tokenStore?.RefreshToken, tokenStore?.ExpiresAt);
@@ -137,13 +145,14 @@ public class KeyStorageService
     }
 
     /// <summary>Clears stored tokens.</summary>
-    public Task ClearTokensAsync()
+    public Task ClearTokensAsync(LocalUser? account = null)
     {
         try
         {
-            if (System.IO.File.Exists(_tokensPath))
+            var path = GetTokenPath(account);
+            if (System.IO.File.Exists(path))
             {
-                System.IO.File.Delete(_tokensPath);
+                System.IO.File.Delete(path);
             }
 
             return Task.CompletedTask;
@@ -170,6 +179,8 @@ public class KeyStorageService
         }
 
         Directory.CreateDirectory(_basePath);
+        Directory.CreateDirectory(UserDataPathService.GetRoamingPath(user, string.Empty));
+        Directory.CreateDirectory(UserDataPathService.GetLocalPath(user, string.Empty));
         var json = JsonSerializer.Serialize(accounts, new JsonSerializerOptions { WriteIndented = true });
         await System.IO.File.WriteAllTextAsync(_accountsPath, json);
     }
@@ -197,6 +208,11 @@ public class KeyStorageService
     private string GetKeyPath(string deviceId)
     {
         return Path.Combine(_keysPath, $"{deviceId}.key");
+    }
+
+    private string GetTokenPath(LocalUser? account)
+    {
+        return account is null ? _tokensPath : UserDataPathService.GetRoamingPath(account, "tokens.dat");
     }
 
     private sealed record TokenStore(string AccessToken, string RefreshToken, DateTime ExpiresAt);

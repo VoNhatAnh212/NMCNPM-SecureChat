@@ -52,6 +52,31 @@ public class ChatRepository : BaseRepository<Chat>, IChatRepository
     }
 
     /// <inheritdoc />
+    public async Task<Chat?> GetGroupChatAsync(Guid groupId)
+    {
+        _logger.LogDebug("Getting chat for group {GroupId}.", groupId);
+
+        return (await GetGroupChatsAsync(groupId))
+            .OrderByDescending(chat => chat.Participants.Count)
+            .ThenByDescending(chat => chat.Messages.OrderByDescending(message => message.SentAt).FirstOrDefault()?.SentAt)
+            .FirstOrDefault();
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyCollection<Chat>> GetGroupChatsAsync(Guid groupId)
+    {
+        _logger.LogDebug("Getting all chats for group {GroupId}.", groupId);
+
+        return await Context.Chats
+            .Where(chat => chat.Type == ChatType.Group && chat.GroupId == groupId)
+            .Include(chat => chat.Group)
+            .Include(chat => chat.Participants)
+            .ThenInclude(user => user.Devices)
+            .Include(chat => chat.Messages.OrderByDescending(message => message.SentAt).Take(1))
+            .ToListAsync();
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyCollection<Chat>> GetUserChatsAsync(Guid userId)
     {
         _logger.LogDebug("Getting chats for user {UserId}.", userId);

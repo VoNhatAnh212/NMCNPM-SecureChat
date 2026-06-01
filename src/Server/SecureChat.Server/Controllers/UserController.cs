@@ -17,6 +17,7 @@ namespace SecureChat.Server.Controllers;
 [Route("api/users")]
 public class UserController : ControllerBase
 {
+    private static readonly TimeSpan OnlineWindow = TimeSpan.FromSeconds(45);
     private readonly IUserRepository _userRepository;
     private readonly IPublicKeyRepository _publicKeyRepository;
 
@@ -59,7 +60,7 @@ public class UserController : ControllerBase
                 DisplayName = user.DisplayName,
                 Email = user.Email,
                 AvatarUrl = user.AvatarUrl,
-                IsOnline = user.IsOnline,
+                IsOnline = IsCurrentlyOnline(user),
                 LastSeen = user.LastSeen
             })
             .ToList();
@@ -85,5 +86,10 @@ public class UserController : ControllerBase
             .ToList();
 
         return Ok(ApiResponse<IReadOnlyCollection<PublicKeyDto>>.Ok(result));
+    }
+
+    private static bool IsCurrentlyOnline(SecureChat.Domain.Entities.User user)
+    {
+        return user.IsOnline && user.LastSeen is not null && DateTimeOffset.UtcNow - user.LastSeen.Value <= OnlineWindow;
     }
 }

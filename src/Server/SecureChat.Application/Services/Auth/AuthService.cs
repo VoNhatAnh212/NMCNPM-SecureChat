@@ -65,22 +65,29 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task<RegisterResponseDto> RegisterAsync(RegisterRequestDto request)
     {
-        _logger.LogInformation("Registering email {Email}.", request.Email);
+        var email = NormalizeEmail(request.Email);
+        _logger.LogInformation("Registering email {Email}.", email);
 
-        var existingUser = await _userRepository.GetByEmailAsync(request.Email);
-        if (string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
+        var existingUser = await _userRepository.GetByEmailAsync(email);
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
         {
             await LogSecurityEventAsync(null, null, "RegisterRejected", "Invalid registration details");
             throw new DomainException("Display name and a password of at least 8 characters are required.", 400);
         }
 
+        if (existingUser is not null)
+        {
+            await LogSecurityEventAsync(existingUser.Id, null, "RegisterRejected", "Email is already registered");
+            throw new DomainException("Email is already registered.", 409);
+        }
+
         var otpCode = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
-        var otpRequest = new OtpRequest(request.Email, otpCode, DateTimeOffset.UtcNow.AddMinutes(10));
+        var otpRequest = new OtpRequest(email, otpCode, DateTimeOffset.UtcNow.AddMinutes(10));
 
         await _otpRepository.AddAsync(otpRequest);
-        PendingDisplayNames[request.Email] = request.DisplayName;
-        await _emailService.SendOtpAsync(request.Email, otpCode, request.DisplayName);
-        await LogSecurityEventAsync(existingUser?.Id, null, "RegisterOtpSent", $"OTP sent to {request.Email}");
+        PendingDisplayNames[email] = request.DisplayName.Trim();
+        await _emailService.SendOtpAsync(email, otpCode, request.DisplayName.Trim());
+        await LogSecurityEventAsync(null, null, "RegisterOtpSent", $"OTP sent to {email}");
 
         return new RegisterResponseDto
         {
@@ -92,9 +99,10 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task<bool> VerifyOtpAsync(OtpVerifyRequestDto request)
     {
-        _logger.LogInformation("Verifying OTP for email {Email}.", request.Email);
+        var email = NormalizeEmail(request.Email);
+        _logger.LogInformation("Verifying OTP for email {Email}.", email);
 
-        await VerifyOtpAndCreateUserAsync(request.Email, request.OtpCode);
+        await VerifyOtpAndCreateUserAsync(email, request.OtpCode);
 
         return true;
     }
@@ -102,9 +110,10 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task<LoginVerifyResponseDto> CompleteRegistrationAsync(CompleteRegistrationRequestDto request)
     {
-        _logger.LogInformation("Completing registration for email {Email}.", request.Email);
+        var email = NormalizeEmail(request.Email);
+        _logger.LogInformation("Completing registration for email {Email}.", email);
 
-        var user = await VerifyOtpAndCreateUserAsync(request.Email, request.OtpCode);
+        var user = await VerifyOtpAndCreateUserAsync(email, request.OtpCode);
         var existingDevice = await _deviceRepository.GetByFingerprintAsync(request.Device.DeviceFingerprint);
         if (existingDevice is not null)
         {
@@ -211,6 +220,15 @@ public class AuthService : IAuthService
     }
 
     /// <inheritdoc />
+    public async Task LogoutAllDevicesAsync(Guid userId)
+    {
+        _logger.LogInformation("Logging out all devices for user {UserId}.", userId);
+
+        await _refreshTokenRepository.RevokeAllForUserAsync(userId);
+        await LogSecurityEventAsync(userId, null, "LogoutAllDevices", "All refresh tokens revoked for user");
+    }
+
+    /// <inheritdoc />
     public async Task<DeviceDto> RegisterDeviceAsync(Guid userId, RegisterDeviceDto request)
     {
         _logger.LogInformation("Registering device for user {UserId}.", userId);
@@ -231,6 +249,43 @@ public class AuthService : IAuthService
         await _emailService.SendSecurityAlertAsync(user.Email, "NewDeviceRegistered", request.DeviceName, "unknown");
         await LogSecurityEventAsync(user.Id, device.Id, "DeviceRegistered", request.DeviceName);
 
+        return ToDeviceDto(device, true);
+    }
+
+    /// <inheritdoc />
+    public async Task<DeviceDto> RotateCurrentDeviceKeyAsync(Guid userId, Guid deviceId, RegisterDeviceDto request)
+    {
+        _logger.LogInformation("Rotating key for device {DeviceId}.", deviceId);
+
+        var device = await GetActiveDeviceAsync(deviceId);
+        if (device.UserId != userId)
+        {
+            throw new UnauthorizedException("The device does not belong to the current user.");
+        }
+
+        var publicKey = await _publicKeyRepository.GetActiveByDeviceIdAsync(device.Id);
+        if (publicKey is null)
+        {
+            publicKey = new PublicKey(userId, device.Id, request.PublicKeyPem, ComputeFingerprint(request.PublicKeyPem));
+            await _publicKeyRepository.AddAsync(publicKey);
+        }
+        else
+        {
+            publicKey.PublicKeyPem = request.PublicKeyPem;
+            publicKey.KeyFingerprint = ComputeFingerprint(request.PublicKeyPem);
+            publicKey.IsActive = true;
+            publicKey.CreatedAt = DateTimeOffset.UtcNow;
+            await _publicKeyRepository.UpdateAsync(publicKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.DeviceName))
+        {
+            device.DeviceName = request.DeviceName;
+        }
+
+        device.DeviceFingerprint = request.DeviceFingerprint;
+        await _deviceRepository.UpdateAsync(device);
+        await LogSecurityEventAsync(userId, device.Id, "DeviceKeyRotated", "Current device public key rotated");
         return ToDeviceDto(device, true);
     }
 
@@ -268,8 +323,8 @@ public class AuthService : IAuthService
         {
             otpRequest.IsUsed = true;
             await _otpRepository.UpdateAsync(otpRequest);
-            await LogSecurityEventAsync(existingUser.Id, null, "DeviceRegistrationOtpVerified", "User verified OTP for device registration");
-            return existingUser;
+            await LogSecurityEventAsync(existingUser.Id, null, "RegistrationRejected", "Email is already registered");
+            throw new DomainException("Email is already registered.", 409);
         }
 
         otpRequest.IsUsed = true;
@@ -279,11 +334,16 @@ public class AuthService : IAuthService
             ? pendingDisplayName
             : email.Split('@')[0];
 
-        var user = new User(email, displayName);
+        var user = new User(NormalizeEmail(email), displayName);
         await _userRepository.AddAsync(user);
         await LogSecurityEventAsync(user.Id, null, "RegistrationCompleted", "User verified OTP and account was created");
 
         return user;
+    }
+
+    private static string NormalizeEmail(string email)
+    {
+        return (email ?? string.Empty).Trim().ToLowerInvariant();
     }
 
     private async Task<DomainDevice> GetActiveDeviceAsync(Guid deviceId)
@@ -334,8 +394,10 @@ public class AuthService : IAuthService
             DeviceName = device.DeviceName,
             Platform = device.Platform,
             LastLoginAt = device.LastLoginAt,
+            CreatedAt = device.CreatedAt,
             IsCurrentDevice = isCurrentDevice,
-            Fingerprint = device.DeviceFingerprint
+            Fingerprint = device.DeviceFingerprint,
+            Status = device.Status
         };
     }
 }

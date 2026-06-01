@@ -51,4 +51,18 @@ public class RefreshTokenRepository : BaseRepository<RefreshToken>, IRefreshToke
                 .SetProperty(refreshToken => refreshToken.IsRevoked, true)
                 .SetProperty(refreshToken => refreshToken.RevokedAt, utcNow));
     }
+
+    /// <inheritdoc />
+    public async Task RevokeAllForUserAsync(Guid userId)
+    {
+        _logger.LogInformation("Revoking all refresh tokens for user {UserId}.", userId);
+
+        var utcNow = DateTimeOffset.UtcNow;
+
+        await Context.RefreshTokens
+            .Where(refreshToken => refreshToken.UserId == userId && !refreshToken.IsRevoked)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(refreshToken => refreshToken.IsRevoked, true)
+                .SetProperty(refreshToken => refreshToken.RevokedAt, utcNow));
+    }
 }

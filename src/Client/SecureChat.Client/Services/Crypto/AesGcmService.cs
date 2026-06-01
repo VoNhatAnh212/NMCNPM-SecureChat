@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SecureChat.Client.Models;
+using SecureChat.Client.Services.Storage;
 
 namespace SecureChat.Client.Services.Crypto;
 
@@ -16,13 +17,15 @@ public class AesGcmService
     private const int KeySizeBytes = 32;
     private const int IvSizeBytes = 12;
     private const int AuthTagSizeBytes = 16;
+    private readonly UserDataPathService? _userDataPathService;
     private readonly ILogger<AesGcmService> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AesGcmService"/> class.
     /// </summary>
-    public AesGcmService(ILogger<AesGcmService>? logger = null)
+    public AesGcmService(UserDataPathService? userDataPathService = null, ILogger<AesGcmService>? logger = null)
     {
+        _userDataPathService = userDataPathService;
         _logger = logger ?? NullLogger<AesGcmService>.Instance;
     }
 
@@ -103,7 +106,7 @@ public class AesGcmService
             var iv = await GenerateIVAsync();
             var plaintext = await System.IO.File.ReadAllBytesAsync(inputPath);
             var encrypted = await EncryptAsync(plaintext, key, iv);
-            var outputPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.securechat");
+            var outputPath = Path.Combine(GetTempPath(), $"{Guid.NewGuid():N}.securechat");
             await System.IO.File.WriteAllBytesAsync(outputPath, encrypted.ciphertext);
             return (outputPath, iv, encrypted.authTag);
         }
@@ -121,7 +124,7 @@ public class AesGcmService
         {
             var ciphertext = await System.IO.File.ReadAllBytesAsync(encryptedPath);
             var plaintext = await DecryptAsync(ciphertext, key, iv, authTag);
-            var outputPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.securechat.dec");
+            var outputPath = Path.Combine(GetTempPath(), $"{Guid.NewGuid():N}.securechat.dec");
             await System.IO.File.WriteAllBytesAsync(outputPath, plaintext);
             return outputPath;
         }
@@ -130,5 +133,12 @@ public class AesGcmService
             _logger.LogError(ex, "File decryption failed.");
             throw new InvalidOperationException("Unable to decrypt file.");
         }
+    }
+
+    private string GetTempPath()
+    {
+        var path = _userDataPathService?.GetLocalPath("Temp") ?? Path.GetTempPath();
+        Directory.CreateDirectory(path);
+        return path;
     }
 }

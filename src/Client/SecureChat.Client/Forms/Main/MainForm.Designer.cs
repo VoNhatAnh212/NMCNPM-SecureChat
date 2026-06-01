@@ -7,6 +7,7 @@ using SecureChat.Client.Services.Api;
 using SecureChat.Client.Services.Crypto;
 using SecureChat.Client.Services.SignalR;
 using SecureChat.Client.Services.Storage;
+using SecureChat.Client.Services;
 
 namespace SecureChat.Client.Forms.Main;
 
@@ -49,11 +50,13 @@ public partial class MainForm
         _leftSidebarPanel = new LeftSidebarPanel();
         _leftSidebarPanel.ChatSelected += LeftSidebarChatSelected;
         _leftSidebarPanel.FriendSelected += LeftSidebarFriendSelected;
+        _leftSidebarPanel.ChatDeleteRequested += LeftSidebarChatDeleteRequested;
         _leftSidebarPanel.LogoutRequested += LogoutRequested;
         _leftSidebarPanel.FriendSearchRequested += FriendSearchRequested;
         _leftSidebarPanel.FriendRequestsRequested += FriendRequestsRequested;
         _leftSidebarPanel.BlockUserRequested += BlockUserRequested;
         _leftSidebarPanel.GroupManagementRequested += GroupManagementRequested;
+        _leftSidebarPanel.SettingsRequested += SettingsRequested;
 
         _chatAreaPanel = new ChatAreaPanel(
             _serviceProvider.GetRequiredService<ChatApiService>(),
@@ -63,6 +66,8 @@ public partial class MainForm
             _serviceProvider.GetRequiredService<FileApiService>(),
             _serviceProvider.GetRequiredService<RsaService>(),
             _serviceProvider.GetRequiredService<KeyStorageService>(),
+            _serviceProvider.GetRequiredService<AuthSessionService>(),
+            _serviceProvider.GetRequiredService<UserDataPathService>(),
             _serviceProvider.GetRequiredService<SessionCache>(),
             _serviceProvider.GetRequiredService<LocalMessageStore>());
 

@@ -39,8 +39,14 @@ public class AuthApiService
     /// <summary>Logs out the current device.</summary>
     public async Task LogoutAsync() => await _apiClient.PostAsync<object, bool>("/api/auth/logout", new { });
 
+    /// <summary>Logs out all devices by revoking refresh tokens.</summary>
+    public async Task LogoutAllDevicesAsync() => await _apiClient.PostAsync<object, bool>("/api/auth/logout-all", new { });
+
     /// <summary>Registers a device.</summary>
     public Task<DeviceDto> RegisterDeviceAsync(RegisterDeviceDto request) => _apiClient.PostAsync<RegisterDeviceDto, DeviceDto>("/api/auth/devices/register", request);
+
+    /// <summary>Rotates the public key for the current device.</summary>
+    public Task<DeviceDto> RotateCurrentDeviceKeyAsync(RegisterDeviceDto request) => _apiClient.PutAsync<RegisterDeviceDto, DeviceDto>("/api/auth/devices/current/key", request);
 
     /// <summary>Gets current user's devices.</summary>
     public async Task<List<DeviceDto>> GetMyDevicesAsync() => (await _apiClient.GetAsync<IReadOnlyCollection<DeviceDto>>("/api/auth/devices")).ToList();

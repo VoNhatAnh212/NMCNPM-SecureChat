@@ -166,7 +166,7 @@ public class GroupManagerForm : Form
             }
 
             _statusLabel.Text = "Members added. Group key rotation required.";
-            await LoadSelectedGroupAsync();
+            await RefreshSelectedGroupAsync();
         }
         catch (Exception ex)
         {
@@ -187,11 +187,35 @@ public class GroupManagerForm : Form
             var member = _selectedGroup.Members.ElementAt(_membersListBox.SelectedIndex);
             await _groupApiService.RemoveMemberAsync(_selectedGroup.Id, member.UserId);
             _statusLabel.Text = "Member removed. Group key rotation required.";
-            await LoadSelectedGroupAsync();
+            await RefreshSelectedGroupAsync();
         }
         catch (Exception ex)
         {
             _statusLabel.Text = ex.Message;
+        }
+    }
+
+    private async Task RefreshSelectedGroupAsync()
+    {
+        if (_selectedGroup is null)
+        {
+            return;
+        }
+
+        var selectedGroupId = _selectedGroup.Id;
+        var selectedIndex = _groups.FindIndex(group => group.Id == selectedGroupId);
+        _selectedGroup = await _groupApiService.GetGroupDetailsAsync(selectedGroupId);
+        if (selectedIndex >= 0)
+        {
+            _groups[selectedIndex] = _selectedGroup;
+            _groupsListBox.Items[selectedIndex] = $"{_selectedGroup.Name} ({_selectedGroup.MemberCount})";
+            _groupsListBox.SelectedIndex = selectedIndex;
+        }
+
+        _membersListBox.Items.Clear();
+        foreach (var member in _selectedGroup.Members)
+        {
+            _membersListBox.Items.Add($"{member.DisplayName} - {member.Role}");
         }
     }
 

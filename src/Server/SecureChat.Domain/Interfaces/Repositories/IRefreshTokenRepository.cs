@@ -18,4 +18,9 @@ public interface IRefreshTokenRepository : IRepository<RefreshToken>
     /// <param name="deviceId">The device identifier.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     Task RevokeAllForDeviceAsync(Guid deviceId);
+
+    /// <summary>Revokes all refresh tokens for a user.</summary>
+    /// <param name="userId">The user identifier.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    Task RevokeAllForUserAsync(Guid userId);
 }

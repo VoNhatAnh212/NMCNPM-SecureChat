@@ -4,7 +4,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UserSecretsId>securechat-server-dev</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

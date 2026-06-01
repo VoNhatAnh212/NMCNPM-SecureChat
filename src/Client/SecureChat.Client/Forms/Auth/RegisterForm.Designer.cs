@@ -23,6 +23,7 @@ public partial class RegisterForm
     private RoundedTextBox _deviceNameTextBox = null!;
     private RoundedButton _sendOtpButton = null!;
     private RoundedButton _verifyOtpButton = null!;
+    private Button _backToLoginButton = null!;
     private LinkLabel _resendOtpLink = null!;
     private Label _timerLabel = null!;
     private Label _errorLabel = null!;
@@ -92,6 +93,19 @@ public partial class RegisterForm
         BuildStepTwoPanel();
         BuildStepThreePanel();
 
+        _backToLoginButton = new Button
+        {
+            Text = "Back to Login",
+            Location = new Point(32, 548),
+            Size = new Size(376, 36),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = ThemeHelper.BgCard,
+            ForeColor = ThemeHelper.TextPrimary,
+            Cursor = Cursors.Hand
+        };
+        _backToLoginButton.FlatAppearance.BorderColor = ThemeHelper.Border;
+        _backToLoginButton.Click += BackToLoginButtonClick;
+
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
         BackColor = ThemeHelper.BgPrimary;
@@ -103,6 +117,7 @@ public partial class RegisterForm
         Controls.Add(_stepLabel);
         Controls.Add(_titleLabel);
         Controls.Add(_logoPictureBox);
+        Controls.Add(_backToLoginButton);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         Name = "RegisterForm";

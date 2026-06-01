@@ -148,6 +148,7 @@ if (app.Configuration.GetValue("Database:AutoMigrate", app.Environment.IsDevelop
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await dbContext.Database.MigrateAsync();
     await EnsureAttachmentUploadSchemaAsync(dbContext);
+    await EnsureHiddenChatsSchemaAsync(dbContext);
 }
 
 app.Run();
@@ -189,6 +190,35 @@ static async Task EnsureAttachmentUploadSchemaAsync(AppDbContext dbContext)
             ALTER TABLE [dbo].[Attachments]
             ADD CONSTRAINT [FK_Attachments_Messages_MessageId]
             FOREIGN KEY ([MessageId]) REFERENCES [dbo].[Messages]([Id]) ON DELETE SET NULL;
+        END
+        """);
+}
+
+static async Task EnsureHiddenChatsSchemaAsync(AppDbContext dbContext)
+{
+    await dbContext.Database.ExecuteSqlRawAsync("""
+        IF OBJECT_ID(N'[dbo].[HiddenChats]', N'U') IS NULL
+        BEGIN
+            CREATE TABLE [dbo].[HiddenChats](
+                [Id] uniqueidentifier NOT NULL DEFAULT newsequentialid(),
+                [ChatId] uniqueidentifier NOT NULL,
+                [UserId] uniqueidentifier NOT NULL,
+                [HiddenAt] datetimeoffset NOT NULL DEFAULT GETUTCDATE(),
+                CONSTRAINT [PK_HiddenChats] PRIMARY KEY ([Id]),
+                CONSTRAINT [FK_HiddenChats_Chats_ChatId] FOREIGN KEY ([ChatId]) REFERENCES [dbo].[Chats]([Id]) ON DELETE CASCADE,
+                CONSTRAINT [FK_HiddenChats_Users_UserId] FOREIGN KEY ([UserId]) REFERENCES [dbo].[Users]([Id]) ON DELETE CASCADE
+            );
+        END
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM sys.indexes
+            WHERE name = N'IX_HiddenChats_ChatId_UserId'
+              AND object_id = OBJECT_ID(N'[dbo].[HiddenChats]')
+        )
+        BEGIN
+            CREATE UNIQUE INDEX [IX_HiddenChats_ChatId_UserId]
+            ON [dbo].[HiddenChats]([ChatId], [UserId]);
         END
         """);
 }

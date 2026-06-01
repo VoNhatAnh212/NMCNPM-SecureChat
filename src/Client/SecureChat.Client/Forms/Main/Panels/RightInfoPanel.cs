@@ -43,13 +43,26 @@ public class RightInfoPanel : UserControl
     /// <summary>Occurs when the secondary action button is clicked.</summary>
     public event Action? SecondaryActionRequested;
 
+    /// <summary>Shows the neutral empty state.</summary>
+    public void ShowEmpty()
+    {
+        _titleLabel.Text = "Select a chat";
+        _subtitleLabel.Text = string.Empty;
+        _badgeLabel.Text = "SecureChat";
+        _fingerprintBox.Text = string.Empty;
+        _primaryButton.Text = "Action";
+        _secondaryButton.Text = "Action";
+        _detailsPanel.Controls.Clear();
+        Invalidate();
+    }
+
     /// <summary>Shows user mode details.</summary>
     public void ShowUser(ChatSummaryDto chat, string email = "")
     {
         _titleLabel.Text = chat.Name;
         _subtitleLabel.Text = string.IsNullOrWhiteSpace(email) ? "SecureChat contact" : email;
         _badgeLabel.Text = "E2EE Active";
-        _fingerprintBox.Text = "AA:BB:CC:DD:EE FF:00:11:22:33";
+        _fingerprintBox.Text = "Open Security Center to view your device fingerprint.";
         _primaryButton.Text = "Block User";
         _secondaryButton.Text = "Shared Files";
         _detailsPanel.Controls.Clear();

@@ -115,6 +115,7 @@ public class FriendService : IFriendService
         }
 
         await _realtimeNotifier.SendFriendRequestResponseAsync(request.FromUserId, request.Id, accept, userId);
+        await _realtimeNotifier.SendFriendRequestResponseAsync(request.ToUserId, request.Id, accept, userId);
         return accept;
     }
 
@@ -123,6 +124,7 @@ public class FriendService : IFriendService
     {
         var friendships = await _friendRepository.GetFriendsAsync(userId);
         return friendships
+            .Where(friend => friend.User is not null && friend.FriendUser is not null)
             .Select(friend =>
             {
                 var friendUser = friend.UserId == userId ? friend.FriendUser : friend.User;
@@ -135,6 +137,7 @@ public class FriendService : IFriendService
                     FriendshipId = friend.Id
                 };
             })
+            .Where(friend => friend.UserId != userId && friend.UserId != Guid.Empty)
             .GroupBy(friend => friend.UserId)
             .Select(group => group.First())
             .ToList();
@@ -226,26 +229,29 @@ public class FriendService : IFriendService
 
     private static FriendRequestDto MapFriendRequest(DomainFriendRequest request)
     {
+        var fromUser = request.FromUser ?? new SecureChat.Domain.Entities.User { Id = request.FromUserId, DisplayName = "Unknown user" };
+        var toUser = request.ToUser ?? new SecureChat.Domain.Entities.User { Id = request.ToUserId, DisplayName = "Unknown user" };
+
         return new FriendRequestDto
         {
             Id = request.Id,
             FromUser = new UserDto
             {
-                Id = request.FromUser.Id,
-                DisplayName = request.FromUser.DisplayName,
-                Email = request.FromUser.Email,
-                AvatarUrl = request.FromUser.AvatarUrl,
-                IsOnline = request.FromUser.IsOnline,
-                LastSeen = request.FromUser.LastSeen
+                Id = fromUser.Id,
+                DisplayName = fromUser.DisplayName,
+                Email = fromUser.Email,
+                AvatarUrl = fromUser.AvatarUrl,
+                IsOnline = fromUser.IsOnline,
+                LastSeen = fromUser.LastSeen
             },
             ToUser = new UserDto
             {
-                Id = request.ToUser.Id,
-                DisplayName = request.ToUser.DisplayName,
-                Email = request.ToUser.Email,
-                AvatarUrl = request.ToUser.AvatarUrl,
-                IsOnline = request.ToUser.IsOnline,
-                LastSeen = request.ToUser.LastSeen
+                Id = toUser.Id,
+                DisplayName = toUser.DisplayName,
+                Email = toUser.Email,
+                AvatarUrl = toUser.AvatarUrl,
+                IsOnline = toUser.IsOnline,
+                LastSeen = toUser.LastSeen
             },
             ToUserId = request.ToUserId,
             Message = request.Message,

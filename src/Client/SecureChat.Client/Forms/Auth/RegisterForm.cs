@@ -78,9 +78,11 @@ public partial class RegisterForm : Form
             StartOtpTimer();
             ShowStep(2);
         }
-        catch
+        catch (Exception ex)
         {
-            ShowError(SendOtpFailedError);
+            ShowError(ex.Message.Contains("Email is already registered", StringComparison.OrdinalIgnoreCase)
+                ? "This email already has an account. Please log in instead."
+                : SendOtpFailedError);
         }
         finally
         {
@@ -110,9 +112,11 @@ public partial class RegisterForm : Form
                 _passwordTextBox.Text);
             StartOtpTimer();
         }
-        catch
+        catch (Exception ex)
         {
-            ShowError(SendOtpFailedError);
+            ShowError(ex.Message.Contains("Email is already registered", StringComparison.OrdinalIgnoreCase)
+                ? "This email already has an account. Please log in instead."
+                : SendOtpFailedError);
         }
     }
 
@@ -257,5 +261,13 @@ public partial class RegisterForm : Form
         var mainForm = new MainForm(_serviceProvider);
         mainForm.FormClosed += (_, _) => Close();
         mainForm.Show();
+    }
+
+    private void BackToLoginButtonClick(object? sender, EventArgs e)
+    {
+        Hide();
+        var loginForm = new LoginForm(_serviceProvider);
+        loginForm.FormClosed += (_, _) => Close();
+        loginForm.Show();
     }
 }

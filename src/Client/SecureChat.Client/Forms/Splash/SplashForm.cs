@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SecureChat.Client.Forms.Auth;
 using SecureChat.Client.Forms.Helpers;
 using SecureChat.Client.Forms.Main;
+using SecureChat.Client.Services;
 using SecureChat.Client.Services.Crypto;
 using SecureChat.Client.Services.SignalR;
 
@@ -22,6 +23,7 @@ public partial class SplashForm : Form
 
     private readonly IServiceProvider _serviceProvider;
     private readonly KeyStorageService _keyStorageService;
+    private readonly AuthSessionService _authSession;
     private readonly ISignalRService _signalRService;
 
     /// <summary>
@@ -32,6 +34,7 @@ public partial class SplashForm : Form
     {
         _serviceProvider = serviceProvider;
         _keyStorageService = serviceProvider.GetRequiredService<KeyStorageService>();
+        _authSession = serviceProvider.GetRequiredService<AuthSessionService>();
         _signalRService = serviceProvider.GetRequiredService<ISignalRService>();
         InitializeComponent();
         ThemeHelper.ApplyTheme(this);
@@ -52,14 +55,18 @@ public partial class SplashForm : Form
             await Task.Delay(SmoothDelayMilliseconds / 4);
 
             SetStatus(LoadingAccountStatus, 45);
-            _ = await _keyStorageService.LoadAccountsAsync();
+            var accounts = await _keyStorageService.LoadAccountsAsync();
 
             SetStatus(VerifyingSessionStatus, 70);
-            var tokens = await _keyStorageService.LoadTokensAsync();
+            var onlyAccount = accounts.Count == 1 ? accounts[0] : null;
+            var tokens = await _keyStorageService.LoadTokensAsync(onlyAccount);
             await Task.Delay(SmoothDelayMilliseconds);
 
-            if (!string.IsNullOrWhiteSpace(tokens.access) && tokens.expiry > DateTime.UtcNow)
+            if (onlyAccount is not null && !string.IsNullOrWhiteSpace(tokens.access) && tokens.expiry > DateTime.UtcNow)
             {
+                var deviceId = AuthSessionService.ExtractStringClaim(tokens.access, "deviceId");
+                var account = accounts.FirstOrDefault(account => string.Equals(account.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+                _authSession.SetSession(tokens.access, tokens.refresh ?? string.Empty, tokens.expiry.Value, account);
                 SetStatus(ConnectingStatus, 92);
                 await _signalRService.ConnectAsync(tokens.access);
                 SetStatus(ConnectingStatus, 100);

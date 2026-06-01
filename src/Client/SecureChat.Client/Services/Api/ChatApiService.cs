@@ -36,12 +36,12 @@ public class ChatApiService
     /// <summary>Sends an encrypted message through HTTP.</summary>
     public Task<MessageDto> SendMessageAsync(SendMessageDto dto) => _apiClient.PostAsync<SendMessageDto, MessageDto>($"/api/chats/{dto.ChatId}/messages", dto);
 
-    /// <summary>Marks messages in a chat as read.</summary>
-    public Task MarkReadAsync(Guid chatId) => _apiClient.PostAsync<object, bool>($"/api/chats/{chatId}/read", new { });
-
     /// <summary>Exchanges an encrypted session key.</summary>
     public async Task ExchangeSessionKeyAsync(Guid chatId, SessionKeyDto sessionKeyDto) => await _apiClient.PostAsync<SessionKeyDto, bool>($"/api/chats/{chatId}/session-key", sessionKeyDto);
 
     /// <summary>Gets an encrypted session key.</summary>
     public Task<SessionKeyDto?> GetSessionKeyAsync(Guid chatId, string deviceId) => _apiClient.GetAsync<SessionKeyDto?>($"/api/chats/{chatId}/session-key/{deviceId}");
+
+    /// <summary>Deletes a chat from the current user's chat list.</summary>
+    public Task<bool> DeleteChatAsync(Guid chatId) => _apiClient.DeleteAsync($"/api/chats/{chatId}");
 }

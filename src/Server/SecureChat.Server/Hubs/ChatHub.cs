@@ -120,26 +120,6 @@ public class ChatHub : Hub
         }
     }
 
-    /// <summary>
-    /// Marks messages as read for the current user.
-    /// </summary>
-    public async Task MarkMessagesReadAsync(Guid chatId)
-    {
-        var userId = Context.User!.GetUserId();
-        await _messageService.MarkMessagesReadAsync(chatId, userId);
-
-        var participantIds = await _messageService.GetChatParticipantIdsAsync(chatId);
-        foreach (var participantId in participantIds.Where(id => id != userId))
-        {
-            await Clients.Group(GetUserGroup(participantId)).SendAsync(SignalREvents.MessageStatus, new MessageStatusDto
-            {
-                MessageId = Guid.Empty,
-                Status = SecureChat.Shared.Enums.MessageStatus.Read,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
-        }
-    }
-
     private async Task BroadcastOnlineStatusToFriendsAsync(Guid userId, bool isOnline, DateTimeOffset? lastSeen)
     {
         var friends = await _friendService.GetFriendsAsync(userId);

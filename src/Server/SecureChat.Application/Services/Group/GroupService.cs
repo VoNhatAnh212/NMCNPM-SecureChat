@@ -131,17 +131,14 @@ public class GroupService : IGroupService
             throw new UnauthorizedException("Only the group owner can dissolve the group.");
         }
 
-        group.IsActive = false;
-        group.UpdatedAt = DateTimeOffset.UtcNow;
-        await _groupRepository.UpdateAsync(group);
-        await NotifyGroupMembersAsync(group, "dissolved", new { groupId });
+        await DissolveGroupInternalAsync(group, "dissolved");
     }
 
     /// <inheritdoc />
     public async Task AddMemberAsync(Guid groupId, Guid requesterId, Guid newMemberId)
     {
         var group = await GetGroupWithMembersAsync(groupId);
-        EnsureAdminOrOwner(group, requesterId);
+        EnsureMember(group, requesterId);
 
         if (group.Members.Any(member => member.UserId == newMemberId))
         {
@@ -157,7 +154,8 @@ public class GroupService : IGroupService
         var member = new DomainGroupMember(groupId, newMemberId, GroupRole.Member);
         await _groupMemberRepository.AddAsync(member);
         await SyncGroupChatParticipantsAsync(groupId);
-        await NotifyGroupMembersAsync(group, "memberAdded", new { groupId, userId = newMemberId, keyRotationRequired = true });
+        var updatedGroup = await GetGroupWithMembersAsync(groupId);
+        await NotifyGroupMembersAsync(updatedGroup, "memberAdded", new { groupId, userId = newMemberId, keyRotationRequired = true });
     }
 
     /// <inheritdoc />
@@ -175,9 +173,23 @@ public class GroupService : IGroupService
         var targetMembership = group.Members.FirstOrDefault(member => member.UserId == targetId)
             ?? throw new DomainException("Target user is not a group member.", 404);
 
+        if (targetMembership.Role == GroupRole.Owner)
+        {
+            if (requesterId == targetId)
+            {
+                await DissolveGroupInternalAsync(group, "ownerLeft");
+                return;
+            }
+
+            throw new UnauthorizedException("The group owner cannot be removed by another member.");
+        }
+
         await _groupMemberRepository.DeleteAsync(targetMembership.Id);
         await SyncGroupChatParticipantsAsync(groupId);
-        await NotifyGroupMembersAsync(group, "memberRemoved", new { groupId, userId = targetId, keyRotationRequired = true });
+        var updatedGroup = await GetGroupWithMembersAsync(groupId);
+        EnsureActiveGroupHasOwner(updatedGroup);
+        await NotifyGroupMembersAsync(updatedGroup, "memberRemoved", new { groupId, userId = targetId, keyRotationRequired = true });
+        await _realtimeNotifier.SendGroupUpdateAsync(targetId, groupId, "memberRemoved", new { groupId, userId = targetId, keyRotationRequired = true });
     }
 
     /// <inheritdoc />
@@ -250,34 +262,76 @@ public class GroupService : IGroupService
 
     private async Task NotifyGroupMembersAsync(DomainGroup group, string eventType, object data)
     {
-        foreach (var member in group.Members)
+        foreach (var member in group.Members.GroupBy(member => member.UserId).Select(grouping => grouping.First()))
         {
             await _realtimeNotifier.SendGroupUpdateAsync(member.UserId, group.Id, eventType, data);
+        }
+    }
+
+    private async Task DissolveGroupInternalAsync(DomainGroup group, string eventType)
+    {
+        var members = group.Members.ToList();
+        var groupKeys = (await _groupKeyRepository.GetAllAsync()).Where(key => key.GroupId == group.Id).ToList();
+        group.IsActive = false;
+        group.UpdatedAt = DateTimeOffset.UtcNow;
+
+        foreach (var member in members)
+        {
+            await _groupMemberRepository.DeleteAsync(member.Id);
+        }
+
+        foreach (var groupKey in groupKeys)
+        {
+            await _groupKeyRepository.DeleteAsync(groupKey.Id);
+        }
+
+        foreach (var chat in await _chatRepository.GetGroupChatsAsync(group.Id))
+        {
+            chat.Participants.Clear();
+            await _chatRepository.UpdateAsync(chat);
+        }
+
+        group.Members.Clear();
+        await _groupRepository.UpdateAsync(group);
+        foreach (var member in members.GroupBy(member => member.UserId).Select(grouping => grouping.First()))
+        {
+            await _realtimeNotifier.SendGroupUpdateAsync(member.UserId, group.Id, eventType, new { groupId = group.Id, dissolved = true, keyRotationRequired = true });
+        }
+    }
+
+    private static void EnsureActiveGroupHasOwner(DomainGroup group)
+    {
+        if (!group.Members.Any(member => member.Role == GroupRole.Owner))
+        {
+            throw new DomainException("An active group must have an owner.", 409);
         }
     }
 
     private async Task SyncGroupChatParticipantsAsync(Guid groupId)
     {
         var group = await GetGroupWithMembersAsync(groupId);
-        var chats = await _chatRepository.GetUserChatsAsync(group.CreatorId);
-        var chat = chats.FirstOrDefault(chat => chat.GroupId == groupId);
-        if (chat is null)
+        var chats = (await _chatRepository.GetGroupChatsAsync(groupId)).ToList();
+        if (chats.Count == 0)
         {
-            chat = new DomainChat(ChatType.Group, groupId);
+            var chat = new DomainChat(ChatType.Group, groupId);
             await _chatRepository.AddAsync(chat);
+            chats.Add(chat);
         }
 
-        chat.Participants.Clear();
-        foreach (var member in group.Members)
+        foreach (var chat in chats)
         {
-            var user = await _userRepository.GetByIdAsync(member.UserId);
-            if (user is not null)
+            chat.Participants.Clear();
+            foreach (var member in group.Members)
             {
-                chat.Participants.Add(user);
+                var user = await _userRepository.GetByIdAsync(member.UserId);
+                if (user is not null)
+                {
+                    chat.Participants.Add(user);
+                }
             }
-        }
 
-        await _chatRepository.UpdateAsync(chat);
+            await _chatRepository.UpdateAsync(chat);
+        }
     }
 
     private async Task EnsureNotBlockedAsync(Guid userId, Guid otherUserId)

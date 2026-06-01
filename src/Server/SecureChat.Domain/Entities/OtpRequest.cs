@@ -21,7 +21,7 @@ public class OtpRequest
     public OtpRequest(string email, string otpCode, DateTimeOffset expiresAt)
     {
         Id = Guid.NewGuid();
-        Email = email;
+        Email = (email ?? string.Empty).Trim().ToLowerInvariant();
         OtpCode = otpCode;
         ExpiresAt = expiresAt;
         CreatedAt = DateTimeOffset.UtcNow;

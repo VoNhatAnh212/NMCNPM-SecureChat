@@ -2,6 +2,7 @@
 
 using System;
 using System.Text.Json.Serialization;
+using SecureChat.Shared.Enums;
 
 namespace SecureChat.Shared.DTOs.Device;
 
@@ -26,6 +27,10 @@ public record DeviceDto
     [JsonPropertyName("lastLoginAt")]
     public DateTimeOffset? LastLoginAt { get; init; }
 
+    /// <summary>Gets the time when the device was created.</summary>
+    [JsonPropertyName("createdAt")]
+    public DateTimeOffset CreatedAt { get; init; }
+
     /// <summary>Gets a value indicating whether this is the current device.</summary>
     [JsonPropertyName("isCurrentDevice")]
     public bool IsCurrentDevice { get; init; }
@@ -33,4 +38,8 @@ public record DeviceDto
     /// <summary>Gets the device fingerprint.</summary>
     [JsonPropertyName("fingerprint")]
     public string Fingerprint { get; init; } = string.Empty;
+
+    /// <summary>Gets the device status.</summary>
+    [JsonPropertyName("status")]
+    public DeviceStatus Status { get; init; } = DeviceStatus.Active;
 }

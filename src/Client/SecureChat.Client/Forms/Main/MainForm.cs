@@ -321,10 +321,12 @@ public partial class MainForm : Form
         await LoadChatListAsync();
     }
 
-    private void SettingsRequested()
+    private async void SettingsRequested()
     {
         using var form = new SettingsForm(_serviceProvider);
         form.ShowDialog(this);
+        _chatAreaPanel.ApplyContentFilterToRenderedMessages();
+        await LoadChatListAsync();
     }
 
     private async void RightInfoPrimaryActionRequested()

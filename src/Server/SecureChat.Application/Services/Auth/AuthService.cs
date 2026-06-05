@@ -23,6 +23,10 @@ namespace SecureChat.Application.Services.Auth;
 public class AuthService : IAuthService
 {
     private static readonly ConcurrentDictionary<string, string> PendingDisplayNames = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, string> PendingPasswordHashes = new(StringComparer.OrdinalIgnoreCase);
+    private const int PasswordSaltSizeBytes = 16;
+    private const int PasswordHashSizeBytes = 32;
+    private const int PasswordIterations = 150_000;
 
     private readonly IUserRepository _userRepository;
     private readonly IDeviceRepository _deviceRepository;
@@ -69,10 +73,10 @@ public class AuthService : IAuthService
         _logger.LogInformation("Registering email {Email}.", email);
 
         var existingUser = await _userRepository.GetByEmailAsync(email);
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.DisplayName) || !IsClientPasswordHash(request.Password))
         {
             await LogSecurityEventAsync(null, null, "RegisterRejected", "Invalid registration details");
-            throw new DomainException("Display name and a password of at least 8 characters are required.", 400);
+            throw new DomainException("Display name and a valid password hash are required.", 400);
         }
 
         if (existingUser is not null)
@@ -86,6 +90,7 @@ public class AuthService : IAuthService
 
         await _otpRepository.AddAsync(otpRequest);
         PendingDisplayNames[email] = request.DisplayName.Trim();
+        PendingPasswordHashes[email] = request.Password.Trim();
         await _emailService.SendOtpAsync(email, otpCode, request.DisplayName.Trim());
         await LogSecurityEventAsync(null, null, "RegisterOtpSent", $"OTP sent to {email}");
 
@@ -138,6 +143,91 @@ public class AuthService : IAuthService
         await _emailService.SendSecurityAlertAsync(user.Email, "NewDeviceRegistered", request.Device.DeviceName, "unknown");
 
         return await IssueTokensAsync(user, device);
+    }
+
+    /// <inheritdoc />
+    public async Task<PasswordLoginStartResponseDto> StartPasswordLoginAsync(PasswordLoginStartRequestDto request)
+    {
+        var username = NormalizeEmail(request.Username);
+        var user = await ValidatePasswordLoginAsync(username, request.PasswordHash);
+        var otpCode = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        var otpRequest = new OtpRequest(user.Email, otpCode, DateTimeOffset.UtcNow.AddMinutes(10));
+
+        await _otpRepository.AddAsync(otpRequest);
+        await _emailService.SendOtpAsync(user.Email, otpCode, user.DisplayName);
+        await LogSecurityEventAsync(user.Id, null, "PasswordLoginOtpSent", "OTP sent for new device login");
+
+        return new PasswordLoginStartResponseDto
+        {
+            RequiresOtp = true,
+            Email = user.Email,
+            DisplayName = user.DisplayName,
+            Message = "OTP sent"
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<LoginVerifyResponseDto> CompletePasswordDeviceLoginAsync(CompletePasswordDeviceLoginRequestDto request)
+    {
+        var username = NormalizeEmail(request.Username);
+        var user = await ValidatePasswordLoginAsync(username, request.PasswordHash);
+        var otpRequest = await _otpRepository.GetValidOtpAsync(user.Email, request.OtpCode);
+        if (otpRequest is null)
+        {
+            await LogSecurityEventAsync(user.Id, null, "PasswordLoginOtpRejected", "Invalid or expired new device OTP");
+            throw new OtpExpiredException();
+        }
+
+        if (otpRequest.Attempts >= 5)
+        {
+            await LogSecurityEventAsync(user.Id, null, "PasswordLoginOtpAttemptLimitExceeded", user.Email);
+            throw new UnauthorizedException("OTP attempt limit exceeded.");
+        }
+
+        otpRequest.IsUsed = true;
+        await _otpRepository.UpdateAsync(otpRequest);
+
+        var existingDevice = await _deviceRepository.GetByFingerprintAsync(request.Device.DeviceFingerprint);
+        if (existingDevice is not null)
+        {
+            throw new DomainException("Device fingerprint is already registered.", 409);
+        }
+
+        var device = new DomainDevice(user.Id, request.Device.DeviceName, request.Device.Platform, request.Device.DeviceFingerprint);
+        await _deviceRepository.AddAsync(device);
+
+        var publicKey = new PublicKey(user.Id, device.Id, request.Device.PublicKeyPem, ComputeFingerprint(request.Device.PublicKeyPem));
+        await _publicKeyRepository.AddAsync(publicKey);
+
+        device.LastLoginAt = DateTimeOffset.UtcNow;
+        await _deviceRepository.UpdateAsync(device);
+
+        await _emailService.SendSecurityAlertAsync(user.Email, "NewDeviceRegisteredByPasswordLogin", request.Device.DeviceName, "unknown");
+        await LogSecurityEventAsync(user.Id, device.Id, "PasswordDeviceLoginSucceeded", "Password and OTP verified; new device registered");
+
+        return await IssueTokensAsync(user, device);
+    }
+
+    /// <inheritdoc />
+    public async Task<LoginChallengeResponseDto> GetPasswordLoginChallengeAsync(PasswordLoginChallengeRequestDto request)
+    {
+        var username = NormalizeEmail(request.Username);
+        var user = await ValidatePasswordLoginAsync(username, request.PasswordHash);
+        var device = await GetActiveDeviceAsync(request.DeviceId);
+        if (device.UserId != user.Id)
+        {
+            await LogSecurityEventAsync(user.Id, device.Id, "PasswordLoginDeviceRejected", "Device does not belong to username");
+            throw new UnauthorizedException("Device does not belong to this account.");
+        }
+
+        var challenge = await _challengeService.GenerateChallengeAsync(device.Id);
+        await LogSecurityEventAsync(user.Id, device.Id, "PasswordLoginChallengeGenerated", "Password verified before login challenge");
+
+        return new LoginChallengeResponseDto
+        {
+            Challenge = challenge,
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(AppConstants.CHALLENGE_EXPIRY_SECONDS)
+        };
     }
 
     /// <inheritdoc />
@@ -333,8 +423,10 @@ public class AuthService : IAuthService
         var displayName = PendingDisplayNames.TryRemove(email, out var pendingDisplayName)
             ? pendingDisplayName
             : email.Split('@')[0];
+        PendingPasswordHashes.TryRemove(email, out var clientPasswordHash);
 
         var user = new User(NormalizeEmail(email), displayName);
+        SetPasswordVerifier(user, clientPasswordHash ?? string.Empty);
         await _userRepository.AddAsync(user);
         await LogSecurityEventAsync(user.Id, null, "RegistrationCompleted", "User verified OTP and account was created");
 
@@ -344,6 +436,67 @@ public class AuthService : IAuthService
     private static string NormalizeEmail(string email)
     {
         return (email ?? string.Empty).Trim().ToLowerInvariant();
+    }
+
+    private async Task<User> ValidatePasswordLoginAsync(string username, string clientPasswordHash)
+    {
+        if (!IsClientPasswordHash(clientPasswordHash))
+        {
+            await LogSecurityEventAsync(null, null, "PasswordLoginRejected", "Invalid password hash format");
+            throw new UnauthorizedException("Invalid username or password.");
+        }
+
+        var user = await _userRepository.GetByEmailAsync(username);
+        if (user is null || string.IsNullOrWhiteSpace(user.PasswordHash) || string.IsNullOrWhiteSpace(user.PasswordSalt) || !VerifyPasswordHash(clientPasswordHash, user.PasswordSalt, user.PasswordHash))
+        {
+            await LogSecurityEventAsync(user?.Id, null, "PasswordLoginRejected", "Invalid username or password");
+            throw new UnauthorizedException("Invalid username or password.");
+        }
+
+        return user;
+    }
+
+    private static bool IsClientPasswordHash(string value)
+    {
+        return !string.IsNullOrWhiteSpace(value) && value.Length == 64 && value.All(Uri.IsHexDigit);
+    }
+
+    private static void SetPasswordVerifier(User user, string clientPasswordHash)
+    {
+        if (!IsClientPasswordHash(clientPasswordHash))
+        {
+            return;
+        }
+
+        var salt = RandomNumberGenerator.GetBytes(PasswordSaltSizeBytes);
+        var hash = DerivePasswordHash(clientPasswordHash, salt);
+        user.PasswordSalt = Convert.ToBase64String(salt);
+        user.PasswordHash = Convert.ToBase64String(hash);
+    }
+
+    private static bool VerifyPasswordHash(string clientPasswordHash, string saltBase64, string expectedHashBase64)
+    {
+        try
+        {
+            var salt = Convert.FromBase64String(saltBase64);
+            var expectedHash = Convert.FromBase64String(expectedHashBase64);
+            var actualHash = DerivePasswordHash(clientPasswordHash, salt);
+            return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static byte[] DerivePasswordHash(string clientPasswordHash, byte[] salt)
+    {
+        return Rfc2898DeriveBytes.Pbkdf2(
+            Encoding.UTF8.GetBytes(clientPasswordHash.ToLowerInvariant()),
+            salt,
+            PasswordIterations,
+            HashAlgorithmName.SHA256,
+            PasswordHashSizeBytes);
     }
 
     private async Task<DomainDevice> GetActiveDeviceAsync(Guid deviceId)

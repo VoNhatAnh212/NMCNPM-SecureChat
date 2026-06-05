@@ -60,6 +60,36 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<LoginVerifyResponseDto>.Ok(response));
     }
 
+    /// <summary>Starts password login for a device that is not trusted locally yet.</summary>
+    [HttpPost("password-login/start")]
+    [ProducesResponseType(typeof(ApiResponse<PasswordLoginStartResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<ApiResponse<PasswordLoginStartResponseDto>>> StartPasswordLoginAsync([FromBody] PasswordLoginStartRequestDto request)
+    {
+        var response = await _authService.StartPasswordLoginAsync(request);
+        return Ok(ApiResponse<PasswordLoginStartResponseDto>.Ok(response));
+    }
+
+    /// <summary>Completes password login by verifying OTP and trusting the new device.</summary>
+    [HttpPost("password-login/complete-device")]
+    [ProducesResponseType(typeof(ApiResponse<LoginVerifyResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<ApiResponse<LoginVerifyResponseDto>>> CompletePasswordDeviceLoginAsync([FromBody] CompletePasswordDeviceLoginRequestDto request)
+    {
+        var response = await _authService.CompletePasswordDeviceLoginAsync(request);
+        return Ok(ApiResponse<LoginVerifyResponseDto>.Ok(response));
+    }
+
+    /// <summary>Gets a password-gated login challenge for an existing trusted device.</summary>
+    [HttpPost("password-login/challenge")]
+    [ProducesResponseType(typeof(ApiResponse<LoginChallengeResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<ApiResponse<LoginChallengeResponseDto>>> GetPasswordLoginChallengeAsync([FromBody] PasswordLoginChallengeRequestDto request)
+    {
+        var response = await _authService.GetPasswordLoginChallengeAsync(request);
+        return Ok(ApiResponse<LoginChallengeResponseDto>.Ok(response));
+    }
+
     /// <summary>Gets a login challenge for a device.</summary>
     [HttpGet("challenge/{deviceId:guid}")]
     [ProducesResponseType(typeof(ApiResponse<LoginChallengeResponseDto>), StatusCodes.Status200OK)]

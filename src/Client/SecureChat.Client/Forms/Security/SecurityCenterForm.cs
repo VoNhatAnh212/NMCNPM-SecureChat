@@ -8,6 +8,7 @@ using SecureChat.Client.Forms.Helpers;
 using SecureChat.Client.Services;
 using SecureChat.Client.Services.Api;
 using SecureChat.Client.Services.Crypto;
+using SecureChat.Client.Services.SignalR;
 using SecureChat.Client.Services.Storage;
 using SecureChat.Shared.DTOs.Device;
 
@@ -22,6 +23,7 @@ public partial class SecurityCenterForm : Form
     private readonly AuthApiService _authApiService;
     private readonly KeyStorageService _keyStorageService;
     private readonly AuthSessionService _authSession;
+    private readonly ISignalRService _signalRService;
     private readonly RsaService _rsaService;
     private readonly SessionCache _sessionCache;
     private string? _currentDeviceId;
@@ -36,6 +38,7 @@ public partial class SecurityCenterForm : Form
         _authApiService = serviceProvider.GetRequiredService<AuthApiService>();
         _keyStorageService = serviceProvider.GetRequiredService<KeyStorageService>();
         _authSession = serviceProvider.GetRequiredService<AuthSessionService>();
+        _signalRService = serviceProvider.GetRequiredService<ISignalRService>();
         _rsaService = serviceProvider.GetRequiredService<RsaService>();
         _sessionCache = serviceProvider.GetRequiredService<SessionCache>();
         InitializeComponent();
@@ -181,9 +184,18 @@ public partial class SecurityCenterForm : Form
 
     private async void RefreshTokenButtonClick(object? sender, EventArgs e)
     {
+        _refreshTokenButton.Enabled = false;
+        var originalText = _refreshTokenButton.Text;
+        _refreshTokenButton.Text = "Refreshing...";
         try
         {
-        var tokens = _authSession.GetTokens();
+            var account = _authSession.CurrentAccount;
+            var tokens = _authSession.GetTokens();
+            if (string.IsNullOrWhiteSpace(tokens.refresh))
+            {
+                tokens = await _keyStorageService.LoadTokensAsync(account);
+            }
+
             if (string.IsNullOrWhiteSpace(tokens.refresh))
             {
                 throw new InvalidOperationException("No refresh token is available.");
@@ -191,13 +203,26 @@ public partial class SecurityCenterForm : Form
 
             var response = await _authApiService.RefreshTokenAsync(tokens.refresh);
             _authSession.UpdateTokens(response.AccessToken, response.RefreshToken, response.ExpiresAt.DateTime);
-            await _keyStorageService.SaveTokensAsync(response.AccessToken, response.RefreshToken, response.ExpiresAt.DateTime, _authSession.CurrentAccount);
+            await _keyStorageService.SaveTokensAsync(response.AccessToken, response.RefreshToken, response.ExpiresAt.DateTime, account);
+
+            if (_signalRService.IsConnected)
+            {
+                await _signalRService.DisconnectAsync();
+                await _signalRService.ConnectAsync(response.AccessToken);
+            }
+
             UpdateJwtStatus(response.ExpiresAt.DateTime);
+            await LoadSecurityStateAsync();
             MessageBox.Show(this, "Token refreshed.", "Security Center", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "Refresh token failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _refreshTokenButton.Text = originalText;
+            _refreshTokenButton.Enabled = true;
         }
     }
 

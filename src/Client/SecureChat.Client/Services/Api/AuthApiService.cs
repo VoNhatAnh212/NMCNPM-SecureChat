@@ -27,6 +27,15 @@ public class AuthApiService
     /// <summary>Completes registration by verifying OTP and registering the first device.</summary>
     public Task<LoginVerifyResponseDto> CompleteRegistrationAsync(CompleteRegistrationRequestDto request) => _apiClient.PostAsync<CompleteRegistrationRequestDto, LoginVerifyResponseDto>("/api/auth/complete-registration", request);
 
+    /// <summary>Starts password login for an untrusted local device.</summary>
+    public Task<PasswordLoginStartResponseDto> StartPasswordLoginAsync(PasswordLoginStartRequestDto request) => _apiClient.PostAsync<PasswordLoginStartRequestDto, PasswordLoginStartResponseDto>("/api/auth/password-login/start", request);
+
+    /// <summary>Completes password login by registering a new trusted device after OTP verification.</summary>
+    public Task<LoginVerifyResponseDto> CompletePasswordDeviceLoginAsync(CompletePasswordDeviceLoginRequestDto request) => _apiClient.PostAsync<CompletePasswordDeviceLoginRequestDto, LoginVerifyResponseDto>("/api/auth/password-login/complete-device", request);
+
+    /// <summary>Gets a password-gated login challenge for an existing trusted device.</summary>
+    public Task<LoginChallengeResponseDto> GetPasswordChallengeAsync(PasswordLoginChallengeRequestDto request) => _apiClient.PostAsync<PasswordLoginChallengeRequestDto, LoginChallengeResponseDto>("/api/auth/password-login/challenge", request);
+
     /// <summary>Gets a login challenge.</summary>
     public Task<LoginChallengeResponseDto> GetChallengeAsync(string deviceId) => _apiClient.GetAsync<LoginChallengeResponseDto>($"/api/auth/challenge/{deviceId}");
 

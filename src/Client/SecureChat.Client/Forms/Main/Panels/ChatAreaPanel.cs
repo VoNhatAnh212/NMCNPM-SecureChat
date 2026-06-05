@@ -8,6 +8,7 @@ using SecureChat.Client.Forms.Main.Controls;
 using SecureChat.Client.Models;
 using SecureChat.Client.Services;
 using SecureChat.Client.Services.Api;
+using SecureChat.Client.Services.Content;
 using SecureChat.Client.Services.Crypto;
 using SecureChat.Client.Services.SignalR;
 using SecureChat.Client.Services.Storage;
@@ -47,6 +48,7 @@ public class ChatAreaPanel : UserControl
     private readonly System.Windows.Forms.Timer _typingTimer;
     private readonly System.Windows.Forms.Timer _keyRotationTimer;
     private readonly HashSet<Guid> _renderedMessageIds = new();
+    private readonly HashSet<Guid> _cachingAttachmentIds = new();
     private ChatSummaryDto? _activeChat;
     private Guid _currentUserId;
     private int _loadVersion;
@@ -184,9 +186,28 @@ public class ChatAreaPanel : UserControl
     public async Task<string> GetPlaintextPreviewAsync(MessageDto message)
     {
         var plaintext = await TryDecryptMessageAsync(message);
-        return string.IsNullOrWhiteSpace(plaintext) && message.Attachments.Count > 0
+        var preview = string.IsNullOrWhiteSpace(plaintext) && message.Attachments.Count > 0
             ? $"File: {message.Attachments.First().FileName}"
             : plaintext;
+        return OffensiveLanguageFilter.Apply(preview);
+    }
+
+    /// <summary>Reapplies the current UI content filter to already rendered message bubbles.</summary>
+    public void ApplyContentFilterToRenderedMessages()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(ApplyContentFilterToRenderedMessages);
+            return;
+        }
+
+        foreach (var bubble in _messagesPanel.Controls.OfType<MessageBubbleControl>())
+        {
+            if (bubble.Tag is string rawPlaintext)
+            {
+                bubble.PlainText = OffensiveLanguageFilter.Apply(rawPlaintext);
+            }
+        }
     }
 
     /// <summary>Shows all files shared in the active chat.</summary>
@@ -348,14 +369,16 @@ public class ChatAreaPanel : UserControl
         {
             Width = GetMessageRowWidth(),
             Message = message,
-            PlainText = plaintext,
+            PlainText = OffensiveLanguageFilter.Apply(plaintext),
             IsMine = isMine,
             IsGroup = _activeChat?.IsGroup ?? false,
-            Margin = new Padding(0, 2, 0, 2)
+            Margin = new Padding(0, 2, 0, 2),
+            Tag = plaintext
         };
         bubble.AttachmentClicked += async (_, attachment) => await PreviewAttachmentAsync(message.ChatId, attachment);
         _messagesPanel.Controls.Add(bubble);
         _renderedMessageIds.Add(message.Id);
+        _ = CacheAttachmentsForMessageAsync(message);
 
         var insertIndex = _messagesPanel.Controls
             .OfType<MessageBubbleControl>()
@@ -372,41 +395,13 @@ public class ChatAreaPanel : UserControl
     {
         try
         {
-            var key = await GetSessionKeyForDecryptAsync(chatId);
-            if (key is null)
+            var previewPath = await GetAttachmentPlaintextPathAsync(chatId, attachment, showMissingKeyMessage: true);
+            if (previewPath is null)
             {
-                MessageBox.Show(this, "Session key is not available on this device.", "SecureChat", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            var encryptedPath = await _fileApiService.DownloadEncryptedFileToTempAsync(attachment.Id);
-            var previewPath = await DecryptAttachmentToLocalCacheAsync(encryptedPath, key, attachment);
-
-            if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-            {
-                using var preview = new Form
-                {
-                    Text = attachment.FileName,
-                    StartPosition = FormStartPosition.CenterParent,
-                    Size = new Size(720, 520)
-                };
-                var picture = new PictureBox
-                {
-                    Dock = DockStyle.Fill,
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Image = Image.FromFile(previewPath)
-                };
-                preview.Controls.Add(picture);
-                preview.ShowDialog(this);
-                picture.Image?.Dispose();
-                return;
-            }
-
-            var result = MessageBox.Show(this, $"{attachment.FileName}\n{FormatFileSize(attachment.FileSize)}\n\nOpen preview file now?", "Attachment preview", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-            if (result == DialogResult.Yes)
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(previewPath) { UseShellExecute = true });
-            }
+            ShowAttachmentPreview(previewPath, attachment);
         }
         catch (Exception ex)
         {
@@ -416,13 +411,6 @@ public class ChatAreaPanel : UserControl
 
     private async Task SaveAttachmentAsync(Guid chatId, AttachmentDto attachment)
     {
-        var key = await GetSessionKeyForDecryptAsync(chatId);
-        if (key is null)
-        {
-            MessageBox.Show(this, "Session key is not available on this device.", "SecureChat", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
         using var dialog = new SaveFileDialog
         {
             FileName = attachment.FileName,
@@ -433,8 +421,12 @@ public class ChatAreaPanel : UserControl
             return;
         }
 
-        var encryptedPath = await _fileApiService.DownloadEncryptedFileToTempAsync(attachment.Id);
-        var plaintextPath = await DecryptAttachmentToLocalCacheAsync(encryptedPath, key, attachment);
+        var plaintextPath = await GetAttachmentPlaintextPathAsync(chatId, attachment, showMissingKeyMessage: true);
+        if (plaintextPath is null)
+        {
+            return;
+        }
+
         File.Copy(plaintextPath, dialog.FileName, overwrite: true);
         MessageBox.Show(this, "File downloaded.", "Shared files", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
@@ -711,6 +703,7 @@ public class ChatAreaPanel : UserControl
 
         var upload = await _fileApiService.InitiateUploadAsync(request);
         await _fileApiService.UploadEncryptedFileAsync(upload.AttachmentId, encrypted.outputPath);
+        await CachePlaintextAttachmentAsync(upload.AttachmentId, fileInfo.Name, dialog.FileName);
         await SendCurrentMessageAsync(new[] { upload.AttachmentId }, string.Empty);
     }
 
@@ -910,17 +903,134 @@ public class ChatAreaPanel : UserControl
         }
     }
 
-    private async Task<string> DecryptAttachmentToLocalCacheAsync(string encryptedPath, byte[] key, AttachmentDto attachment)
+    private async Task<string?> GetAttachmentPlaintextPathAsync(Guid chatId, AttachmentDto attachment, bool showMissingKeyMessage)
+    {
+        var cachedPath = TryGetCachedAttachmentPath(attachment);
+        if (cachedPath is not null)
+        {
+            return cachedPath;
+        }
+
+        var key = await GetSessionKeyForDecryptAsync(chatId);
+        if (key is null)
+        {
+            if (showMissingKeyMessage)
+            {
+                MessageBox.Show(this, "Session key is not available and this file is not cached on this device yet.", "SecureChat", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+
+            return null;
+        }
+
+        var encryptedPath = await _fileApiService.DownloadEncryptedFileToTempAsync(attachment.Id);
+        return await DecryptAttachmentToLocalCacheAsync(encryptedPath, key, attachment);
+    }
+
+    private async Task CacheAttachmentsForMessageAsync(MessageDto message)
+    {
+        if (message.Attachments.Count == 0)
+        {
+            return;
+        }
+
+        var missingAttachments = message.Attachments
+            .Where(attachment => TryGetCachedAttachmentPath(attachment) is null)
+            .ToList();
+        if (missingAttachments.Count == 0)
+        {
+            return;
+        }
+
+        var key = await GetSessionKeyForDecryptAsync(message.ChatId);
+        if (key is null)
+        {
+            return;
+        }
+
+        foreach (var attachment in missingAttachments)
+        {
+            if (!TryStartAttachmentCache(attachment.Id))
+            {
+                continue;
+            }
+
+            try
+            {
+                var encryptedPath = await _fileApiService.DownloadEncryptedFileToTempAsync(attachment.Id);
+                await DecryptAttachmentToLocalCacheAsync(encryptedPath, key, attachment);
+            }
+            catch
+            {
+                // Background cache is opportunistic; preview/download will surface errors if needed.
+            }
+            finally
+            {
+                FinishAttachmentCache(attachment.Id);
+            }
+        }
+    }
+
+    private async Task CachePlaintextAttachmentAsync(Guid attachmentId, string fileName, string plaintextPath)
+    {
+        var cachedPath = GetCachedAttachmentPath(attachmentId, fileName);
+        if (string.Equals(Path.GetFullPath(cachedPath), Path.GetFullPath(plaintextPath), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (File.Exists(cachedPath))
+        {
+            return;
+        }
+
+        await using var source = File.OpenRead(plaintextPath);
+        await using var destination = File.Create(cachedPath);
+        await source.CopyToAsync(destination);
+    }
+
+    private string? TryGetCachedAttachmentPath(AttachmentDto attachment)
+    {
+        var path = GetCachedAttachmentPath(attachment.Id, attachment.FileName);
+        return File.Exists(path) ? path : null;
+    }
+
+    private string GetCachedAttachmentPath(AttachmentDto attachment)
+    {
+        return GetCachedAttachmentPath(attachment.Id, attachment.FileName);
+    }
+
+    private string GetCachedAttachmentPath(Guid attachmentId, string fileName)
     {
         var localFileCachePath = _userDataPathService.GetLocalPath("Files");
         Directory.CreateDirectory(localFileCachePath);
-        var safeName = string.Join("_", attachment.FileName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
-        if (string.IsNullOrWhiteSpace(safeName))
-        {
-            safeName = "file";
-        }
+        return Path.Combine(localFileCachePath, $"{attachmentId:N}_{GetSafeAttachmentFileName(fileName)}");
+    }
 
-        var cachedPath = Path.Combine(localFileCachePath, $"{attachment.Id:N}_{safeName}");
+    private static string GetSafeAttachmentFileName(string fileName)
+    {
+        var safeName = string.Join("_", fileName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+        return string.IsNullOrWhiteSpace(safeName) ? "file" : safeName;
+    }
+
+    private bool TryStartAttachmentCache(Guid attachmentId)
+    {
+        lock (_cachingAttachmentIds)
+        {
+            return _cachingAttachmentIds.Add(attachmentId);
+        }
+    }
+
+    private void FinishAttachmentCache(Guid attachmentId)
+    {
+        lock (_cachingAttachmentIds)
+        {
+            _cachingAttachmentIds.Remove(attachmentId);
+        }
+    }
+
+    private async Task<string> DecryptAttachmentToLocalCacheAsync(string encryptedPath, byte[] key, AttachmentDto attachment)
+    {
+        var cachedPath = GetCachedAttachmentPath(attachment);
         if (File.Exists(cachedPath))
         {
             return cachedPath;
@@ -933,6 +1043,35 @@ public class ChatAreaPanel : UserControl
             Convert.FromBase64String(attachment.AuthTag));
         File.Copy(plaintextPath, cachedPath, overwrite: true);
         return cachedPath;
+    }
+
+    private void ShowAttachmentPreview(string previewPath, AttachmentDto attachment)
+    {
+        if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            using var preview = new Form
+            {
+                Text = attachment.FileName,
+                StartPosition = FormStartPosition.CenterParent,
+                Size = new Size(720, 520)
+            };
+            var picture = new PictureBox
+            {
+                Dock = DockStyle.Fill,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = Image.FromFile(previewPath)
+            };
+            preview.Controls.Add(picture);
+            preview.ShowDialog(this);
+            picture.Image?.Dispose();
+            return;
+        }
+
+        var result = MessageBox.Show(this, $"{attachment.FileName}\n{FormatFileSize(attachment.FileSize)}\n\nOpen preview file now?", "Attachment preview", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+        if (result == DialogResult.Yes)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(previewPath) { UseShellExecute = true });
+        }
     }
 
     private static void ConfigureIconButton(Button button)

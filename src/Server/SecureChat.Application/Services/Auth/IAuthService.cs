@@ -25,6 +25,21 @@ public interface IAuthService
     /// <returns>The authentication response for the newly registered device.</returns>
     Task<LoginVerifyResponseDto> CompleteRegistrationAsync(CompleteRegistrationRequestDto request);
 
+    /// <summary>Starts password login for a device that is not trusted locally yet.</summary>
+    /// <param name="request">The password login request.</param>
+    /// <returns>The login start response.</returns>
+    Task<PasswordLoginStartResponseDto> StartPasswordLoginAsync(PasswordLoginStartRequestDto request);
+
+    /// <summary>Completes password login by verifying OTP and registering a new trusted device.</summary>
+    /// <param name="request">The password device login request.</param>
+    /// <returns>The authentication response.</returns>
+    Task<LoginVerifyResponseDto> CompletePasswordDeviceLoginAsync(CompletePasswordDeviceLoginRequestDto request);
+
+    /// <summary>Gets a login challenge after verifying the password for an existing trusted device.</summary>
+    /// <param name="request">The password challenge request.</param>
+    /// <returns>The login challenge response.</returns>
+    Task<LoginChallengeResponseDto> GetPasswordLoginChallengeAsync(PasswordLoginChallengeRequestDto request);
+
     /// <summary>Gets a login challenge for a trusted device.</summary>
     /// <param name="request">The challenge request.</param>
     /// <returns>The login challenge response.</returns>

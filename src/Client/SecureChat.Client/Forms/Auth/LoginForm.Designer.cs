@@ -20,6 +20,7 @@ public partial class LoginForm
     private Label _orLabel = null!;
     private RoundedButton _addDeviceButton = null!;
     private Button _removeAccountButton = null!;
+    private RoundedButton _passwordLoginButton = null!;
     private Label _errorLabel = null!;
 
     /// <summary>
@@ -42,7 +43,7 @@ public partial class LoginForm
 
         _logoPictureBox = new PictureBox
         {
-            Location = new Point(180, 30),
+            Location = new Point(180, 24),
             Size = new Size(80, 80),
             BackColor = Color.Transparent
         };
@@ -54,7 +55,7 @@ public partial class LoginForm
             Text = "Welcome back",
             Font = new Font("Segoe UI", 24F, FontStyle.Bold, GraphicsUnit.Point),
             ForeColor = ThemeHelper.TextPrimary,
-            Location = new Point(32, 122),
+            Location = new Point(32, 114),
             Size = new Size(376, 42),
             TextAlign = ContentAlignment.MiddleCenter
         };
@@ -65,7 +66,7 @@ public partial class LoginForm
             Text = "Sign in to your device",
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = ThemeHelper.TextMuted,
-            Location = new Point(32, 164),
+            Location = new Point(32, 156),
             Size = new Size(376, 24),
             TextAlign = ContentAlignment.MiddleCenter
         };
@@ -76,14 +77,14 @@ public partial class LoginForm
             Text = "Saved Accounts",
             Font = new Font("Segoe UI", 8.5F, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = ThemeHelper.TextMuted,
-            Location = new Point(34, 214),
+            Location = new Point(34, 218),
             Size = new Size(200, 20)
         };
 
         _accountsPanel = new AccountListPanel
         {
-            Location = new Point(32, 238),
-            Size = new Size(376, 178),
+            Location = new Point(32, 242),
+            Size = new Size(376, 210),
             BorderStyle = BorderStyle.None
         };
         _accountsPanel.SelectedAccountChanged += AccountSelectionChanged;
@@ -95,7 +96,7 @@ public partial class LoginForm
             Text = "No saved accounts. Create an account to start using SecureChat.",
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = ThemeHelper.TextMuted,
-            Location = new Point(56, 292),
+            Location = new Point(56, 310),
             Size = new Size(328, 56),
             TextAlign = ContentAlignment.MiddleCenter,
             Visible = false
@@ -104,7 +105,7 @@ public partial class LoginForm
         _loginButton = new RoundedButton
         {
             Text = "Login with selected account",
-            Location = new Point(32, 432),
+            Location = new Point(32, 470),
             Size = new Size(376, 46),
             Enabled = false
         };
@@ -116,10 +117,20 @@ public partial class LoginForm
             Text = "or",
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = ThemeHelper.TextMuted,
-            Location = new Point(32, 486),
+            Location = new Point(32, 524),
             Size = new Size(376, 18),
             TextAlign = ContentAlignment.MiddleCenter
         };
+
+        _passwordLoginButton = new RoundedButton
+        {
+            Text = "Login with other account",
+            BackColor = ThemeHelper.AccentBlue,
+            ForeColor = Color.White,
+            Location = new Point(32, 552),
+            Size = new Size(184, 42)
+        };
+        _passwordLoginButton.Click += PasswordLoginButtonClick;
 
         _addDeviceButton = new RoundedButton
         {
@@ -127,8 +138,8 @@ public partial class LoginForm
             BackColor = ThemeHelper.BgCard,
             HoverBackColor = ThemeHelper.BgHover,
             ForeColor = ThemeHelper.TextPrimary,
-            Location = new Point(32, 510),
-            Size = new Size(376, 42)
+            Location = new Point(224, 552),
+            Size = new Size(184, 42)
         };
         _addDeviceButton.Click += AddDeviceButtonClick;
 
@@ -139,7 +150,7 @@ public partial class LoginForm
             BackColor = ThemeHelper.BgPrimary,
             ForeColor = ThemeHelper.TextMuted,
             Font = new Font("Segoe UI", 8.5F, FontStyle.Regular, GraphicsUnit.Point),
-            Location = new Point(152, 558),
+            Location = new Point(152, 606),
             Size = new Size(136, 26),
             Cursor = Cursors.Hand
         };
@@ -150,7 +161,7 @@ public partial class LoginForm
         {
             AutoSize = false,
             ForeColor = ThemeHelper.Danger,
-            Location = new Point(32, 194),
+            Location = new Point(32, 188),
             Size = new Size(376, 20),
             TextAlign = ContentAlignment.MiddleCenter,
             Visible = false
@@ -159,8 +170,9 @@ public partial class LoginForm
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
         BackColor = ThemeHelper.BgPrimary;
-        ClientSize = new Size(440, 580);
+        ClientSize = new Size(440, 650);
         Controls.Add(_errorLabel);
+        Controls.Add(_passwordLoginButton);
         Controls.Add(_removeAccountButton);
         Controls.Add(_addDeviceButton);
         Controls.Add(_orLabel);

@@ -147,11 +147,27 @@ if (app.Configuration.GetValue("Database:AutoMigrate", app.Environment.IsDevelop
     await using var scope = app.Services.CreateAsyncScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await dbContext.Database.MigrateAsync();
+    await EnsurePasswordLoginSchemaAsync(dbContext);
     await EnsureAttachmentUploadSchemaAsync(dbContext);
     await EnsureHiddenChatsSchemaAsync(dbContext);
 }
 
 app.Run();
+
+static async Task EnsurePasswordLoginSchemaAsync(AppDbContext dbContext)
+{
+    await dbContext.Database.ExecuteSqlRawAsync("""
+        IF COL_LENGTH(N'[dbo].[Users]', N'PasswordHash') IS NULL
+        BEGIN
+            ALTER TABLE [dbo].[Users] ADD [PasswordHash] nvarchar(128) NOT NULL CONSTRAINT [DF_Users_PasswordHash] DEFAULT N'';
+        END
+
+        IF COL_LENGTH(N'[dbo].[Users]', N'PasswordSalt') IS NULL
+        BEGIN
+            ALTER TABLE [dbo].[Users] ADD [PasswordSalt] nvarchar(64) NOT NULL CONSTRAINT [DF_Users_PasswordSalt] DEFAULT N'';
+        END
+        """);
+}
 
 static async Task EnsureAttachmentUploadSchemaAsync(AppDbContext dbContext)
 {

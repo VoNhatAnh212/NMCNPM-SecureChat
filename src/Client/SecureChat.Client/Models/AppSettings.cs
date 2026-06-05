@@ -30,4 +30,7 @@ public class AppSettings
 
     /// <summary>Gets or sets a value indicating whether the app should start with Windows.</summary>
     public bool StartWithWindows { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether offensive words are masked in the UI.</summary>
+    public bool MaskOffensiveLanguage { get; set; }
 }

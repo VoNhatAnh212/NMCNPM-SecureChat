@@ -44,6 +44,12 @@ public class User
     /// <summary>Gets or sets the user's avatar URL.</summary>
     public string AvatarUrl { get; set; } = string.Empty;
 
+    /// <summary>Gets or sets the server-side password verifier derived from the client password hash.</summary>
+    public string PasswordHash { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the salt used for the server-side password verifier.</summary>
+    public string PasswordSalt { get; set; } = string.Empty;
+
     /// <summary>Gets or sets a value indicating whether the user is online.</summary>
     public bool IsOnline { get; set; }
 

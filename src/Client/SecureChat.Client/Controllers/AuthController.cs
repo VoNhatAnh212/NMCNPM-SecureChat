@@ -1,5 +1,7 @@
 #nullable enable
 
+using System.Security.Cryptography;
+using System.Text;
 using SecureChat.Client.Models;
 using SecureChat.Client.Services;
 using SecureChat.Client.Services.Api;
@@ -22,6 +24,16 @@ public class AuthController
     private readonly AuthSessionService _authSession;
     private readonly ISignalRService _signalRService;
     private readonly SessionCache _sessionCache;
+
+    /// <summary>Represents the result of starting a password login flow.</summary>
+    public enum PasswordLoginStartStatus
+    {
+        /// <summary>The account was logged in through an existing trusted local device key.</summary>
+        LoggedIn,
+
+        /// <summary>The account needs OTP verification before this device can be trusted.</summary>
+        OtpRequired
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AuthController"/> class.
@@ -76,6 +88,72 @@ public class AuthController
         return true;
     }
 
+    /// <summary>Starts login by username and password hash, using a trusted local key when available.</summary>
+    public async Task<PasswordLoginStartStatus> StartPasswordLoginAsync(string username, string password)
+    {
+        var normalizedUsername = NormalizeUsername(username);
+        var passwordHash = HashPasswordForTransport(password);
+        var accounts = await _keyStorageService.LoadAccountsAsync();
+        var localAccount = accounts
+            .OrderByDescending(account => account.LastLoginAt)
+            .FirstOrDefault(account => string.Equals(account.Email, normalizedUsername, StringComparison.OrdinalIgnoreCase));
+
+        if (localAccount is not null)
+        {
+            var privateKeyPem = await _keyStorageService.LoadPrivateKeyAsync(localAccount.DeviceId);
+            if (!string.IsNullOrWhiteSpace(privateKeyPem))
+            {
+                var challenge = await _authApiService.GetPasswordChallengeAsync(new PasswordLoginChallengeRequestDto
+                {
+                    Username = normalizedUsername,
+                    PasswordHash = passwordHash,
+                    DeviceId = Guid.Parse(localAccount.DeviceId)
+                });
+                var signedChallenge = await _rsaService.SignChallengeAsync(challenge.Challenge, privateKeyPem);
+                var loginResponse = await _authApiService.LoginAsync(new LoginVerifyRequestDto
+                {
+                    DeviceId = Guid.Parse(localAccount.DeviceId),
+                    SignedChallenge = signedChallenge
+                });
+
+                await StoreLoginResponseAsync(loginResponse, localAccount.DeviceId);
+                return PasswordLoginStartStatus.LoggedIn;
+            }
+        }
+
+        await _authApiService.StartPasswordLoginAsync(new PasswordLoginStartRequestDto
+        {
+            Username = normalizedUsername,
+            PasswordHash = passwordHash
+        });
+        return PasswordLoginStartStatus.OtpRequired;
+    }
+
+    /// <summary>Completes password login on a device that must become trusted through OTP.</summary>
+    public async Task<bool> CompletePasswordDeviceLoginAsync(string username, string password, string otp, string deviceName)
+    {
+        var keyPair = await _rsaService.GenerateKeyPairAsync();
+        var fingerprint = await _rsaService.GetPublicKeyFingerprintAsync(keyPair.publicKeyPem);
+        var loginResponse = await _authApiService.CompletePasswordDeviceLoginAsync(new CompletePasswordDeviceLoginRequestDto
+        {
+            Username = NormalizeUsername(username),
+            PasswordHash = HashPasswordForTransport(password),
+            OtpCode = otp,
+            Device = new RegisterDeviceDto
+            {
+                DeviceName = string.IsNullOrWhiteSpace(deviceName) ? Environment.MachineName : deviceName.Trim(),
+                Platform = Environment.OSVersion.Platform.ToString(),
+                PublicKeyPem = keyPair.publicKeyPem,
+                DeviceFingerprint = fingerprint
+            }
+        });
+
+        var deviceId = ExtractDeviceId(loginResponse.AccessToken);
+        await _keyStorageService.SavePrivateKeyAsync(deviceId, keyPair.privateKeyPem);
+        await StoreLoginResponseAsync(loginResponse, deviceId);
+        return true;
+    }
+
     /// <summary>Starts registration by sending an OTP.</summary>
     public async Task<bool> RegisterAsync(string email, string displayName, string password)
     {
@@ -83,7 +161,7 @@ public class AuthController
         {
             Email = email,
             DisplayName = displayName,
-            Password = password
+            Password = HashPasswordForTransport(password)
         });
 
         return string.Equals(response.Message, "OTP sent", StringComparison.OrdinalIgnoreCase);
@@ -124,6 +202,34 @@ public class AuthController
 
         await _signalRService.ConnectAsync(loginResponse.AccessToken);
         return true;
+    }
+
+    private async Task StoreLoginResponseAsync(LoginVerifyResponseDto loginResponse, string deviceId)
+    {
+        var account = new LocalUser
+        {
+            Id = loginResponse.User.Id,
+            DisplayName = loginResponse.User.DisplayName,
+            Email = loginResponse.User.Email,
+            AvatarUrl = loginResponse.User.AvatarUrl,
+            DeviceId = deviceId,
+            LastLoginAt = DateTime.UtcNow
+        };
+        await _keyStorageService.SaveTokensAsync(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime, account);
+        await _keyStorageService.SaveAccountAsync(account);
+        _authSession.SetSession(loginResponse.AccessToken, loginResponse.RefreshToken, loginResponse.ExpiresAt.DateTime, account);
+        await _signalRService.ConnectAsync(loginResponse.AccessToken);
+    }
+
+    private static string HashPasswordForTransport(string password)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(password));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static string NormalizeUsername(string username)
+    {
+        return (username ?? string.Empty).Trim().ToLowerInvariant();
     }
 
     /// <summary>Logs out the current device.</summary>

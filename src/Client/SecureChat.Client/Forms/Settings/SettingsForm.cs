@@ -65,6 +65,7 @@ public partial class SettingsForm : Form
         _settings.Language = _languageCombo.SelectedItem?.ToString() ?? "EN";
         _settings.StartWithWindows = _startWithWindowsCheck.Checked;
         _settings.MinimizeToTray = _minimizeToTrayCheck.Checked;
+        _settings.MaskOffensiveLanguage = _maskOffensiveLanguageCheck.Checked;
         _settings.EnableNotifications = _enableNotificationsCheck.Checked;
         _settings.MessageSound = _soundCombo.SelectedItem?.ToString() ?? "Default";
         _settings.GroupNotifications = _groupMessagesCheck.Checked;
@@ -100,6 +101,7 @@ public partial class SettingsForm : Form
 
         _startWithWindowsCheck.Checked = _settings.StartWithWindows;
         _minimizeToTrayCheck.Checked = _settings.MinimizeToTray;
+        _maskOffensiveLanguageCheck.Checked = _settings.MaskOffensiveLanguage;
         _enableNotificationsCheck.Checked = _settings.EnableNotifications;
         _soundCombo.SelectedItem = _settings.MessageSound;
         if (_soundCombo.SelectedIndex < 0)

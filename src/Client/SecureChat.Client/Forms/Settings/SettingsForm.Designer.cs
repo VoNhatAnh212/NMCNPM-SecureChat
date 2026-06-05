@@ -24,6 +24,7 @@ public partial class SettingsForm
     private ComboBox _languageCombo = null!;
     private CheckBox _startWithWindowsCheck = null!;
     private CheckBox _minimizeToTrayCheck = null!;
+    private CheckBox _maskOffensiveLanguageCheck = null!;
     private CheckBox _enableNotificationsCheck = null!;
     private CheckBox _messageSoundCheck = null!;
     private ComboBox _soundCombo = null!;
@@ -139,7 +140,9 @@ public partial class SettingsForm
         _languageCombo = CreateCombo("EN", "VI");
         _startWithWindowsCheck = CreateCheck("Start with Windows");
         _minimizeToTrayCheck = CreateCheck("Minimize to tray");
+        _maskOffensiveLanguageCheck = CreateCheck("Local AI moderation: mask offensive words with ****");
 
+        _generalPage.Controls.Add(_maskOffensiveLanguageCheck);
         _generalPage.Controls.Add(_minimizeToTrayCheck);
         _generalPage.Controls.Add(_startWithWindowsCheck);
         _generalPage.Controls.Add(CreateLabeledControl("Language", _languageCombo));

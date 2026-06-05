@@ -37,6 +37,16 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasMaxLength(500)
             .IsRequired(false);
 
+        builder.Property(user => user.PasswordHash)
+            .HasMaxLength(128)
+            .IsRequired(false)
+            .HasDefaultValue(string.Empty);
+
+        builder.Property(user => user.PasswordSalt)
+            .HasMaxLength(64)
+            .IsRequired(false)
+            .HasDefaultValue(string.Empty);
+
         builder.Property(user => user.CreatedAt)
             .HasDefaultValueSql("GETUTCDATE()");
 

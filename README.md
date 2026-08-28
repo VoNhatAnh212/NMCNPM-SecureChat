@@ -1,6 +1,6 @@
 # SecureChat
 
-SecureChat là ứng dụng chat client/server dùng WinForms + ASP.NET Core, có đăng ký bằng OTP email, TLS, RSA device key, AES-GCM session key, friend, group, file/media và lưu dữ liệu local riêng theo từng user.
+SecureChat là ứng dụng chat client/server dùng WinForms + ASP.NET Core, có đăng ký bằng OTP email, TLS, RSA device key, AES-GCM session key, friend, group, file/media và lưu dữ liệu local riêng theo từng user. Chủ yếu sử dụng vibe code để hoàn thành đồ án.
 
 ## Yêu Cầu
 
